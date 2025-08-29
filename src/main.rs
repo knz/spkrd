@@ -15,7 +15,7 @@ mod speaker;
 #[derive(Parser)]
 #[command(author, version, about = "FreeBSD speaker device network server", long_about = None)]
 struct Args {
-    #[arg(short, long, default_value = "8080")]
+    #[arg(short, long, default_value = "1111")]
     port: u16,
 
     #[arg(short, long, default_value = "30", help = "Retry timeout in seconds")]

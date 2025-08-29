@@ -5,10 +5,10 @@
 # Add the following lines to /etc/rc.conf to enable spkrd:
 #
 # spkrd_enable="YES"
-# spkrd_flags="--port 8080 --device /dev/speaker --retry-timeout 30"
+# spkrd_flags="--port 1111 --device /dev/speaker --retry-timeout 30"
 #
 # Available flags:
-#   --port <port>           Server port (default: 8080)
+#   --port <port>           Server port (default: 1111)
 #   --device <path>         Speaker device path (default: /dev/speaker)  
 #   --retry-timeout <secs>  Device retry timeout (default: 30)
 #   --daemon                Run as daemon (automatically added by rc.d)
@@ -18,10 +18,10 @@
 # Examples:
 #   spkrd_flags="--port 3000"
 #   spkrd_flags="--device /tmp/test-speaker --port 9000"
-#   spkrd_flags="--retry-timeout 60 --port 8080"
-#   spkrd_flags="--pidfile /var/run/spkrd-alt.pid --port 8080"
+#   spkrd_flags="--retry-timeout 60 --port 1111"
+#   spkrd_flags="--pidfile /var/run/spkrd-alt.pid --port 1111"
 #   spkrd_flags="--debug"                    # Enable debug logging
-#   spkrd_flags="--debug --port 8080"       # Debug logging with custom port
+#   spkrd_flags="--debug --port 1111"       # Debug logging with custom port
 #
 # Logging:
 #   - Default: Startup messages and errors only (to syslog facility 'daemon')

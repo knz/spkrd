@@ -9,7 +9,7 @@ SPKRD provides HTTP access to FreeBSD's `/dev/speaker` device for remote melody 
 ## Base URL
 
 ```
-http://your-server:8080
+http://your-server:1111
 ```
 
 ## Endpoints
@@ -39,12 +39,12 @@ Plays a melody on the FreeBSD speaker device.
 
 ### Play a simple melody
 ```bash
-curl -X PUT http://localhost:8080/play -d "cdefgab"
+curl -X PUT http://localhost:1111/play -d "cdefgab"
 ```
 
 ### Play a more complex melody
 ```bash
-curl -X PUT http://localhost:8080/play -d "t120l8cdegreg"
+curl -X PUT http://localhost:1111/play -d "t120l8cdegreg"
 ```
 
 ## Error Responses
@@ -72,10 +72,10 @@ Example: `"t120l4 c d e f g a b o5c"`
 ## Server Configuration
 
 ```bash
-spkrd --port 8080 --retry-timeout 30 --device /dev/speaker
+spkrd --port 1111 --retry-timeout 30 --device /dev/speaker
 ```
 
 Options:
-- `--port`: Server port (default: 8080)
+- `--port`: Server port (default: 1111)
 - `--retry-timeout`: Device retry timeout in seconds (default: 30)
 - `--device`: Path to speaker device (default: /dev/speaker)

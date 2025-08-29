@@ -13,7 +13,7 @@ import (
 func main() {
 	if len(os.Args) != 3 {
 		fmt.Fprintf(os.Stderr, "Usage: %s <server_url> <melody>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Example: %s http://192.168.1.100:8080 \"cdefgab\"\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Example: %s http://192.168.1.100:1111 \"cdefgab\"\n", os.Args[0])
 		os.Exit(1)
 	}
 
