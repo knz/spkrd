@@ -35,17 +35,45 @@ fn read_server_from_config() -> Option<String> {
     }
 }
 
+fn normalize_server_url(url: &str) -> String {
+    let mut normalized = url.to_string();
+    
+    // Add http:// scheme if no scheme is present
+    if !normalized.starts_with("http://") && !normalized.starts_with("https://") {
+        normalized = format!("http://{}", normalized);
+    }
+    
+    // Remove trailing slashes
+    normalized = normalized.trim_end_matches('/').to_string();
+    
+    // Add default port if not present
+    // Find the scheme separator and check if there's a port after the hostname
+    if let Some(scheme_pos) = normalized.find("://") {
+        let after_scheme = &normalized[scheme_pos + 3..];
+        // Check if there's already a port (contains : after the hostname)
+        // We need to be careful not to confuse IPv6 addresses, but for basic string manipulation
+        // we'll assume no IPv6 and just check for a single colon
+        if !after_scheme.contains(':') {
+            normalized = format!("{}:1111", normalized);
+        }
+    }
+    
+    normalized
+}
+
 fn get_server_url(args: &Args) -> Result<String, String> {
-    if let Some(server) = &args.server {
-        Ok(server.clone())
+    let raw_url = if let Some(server) = &args.server {
+        server.clone()
     } else if let Some(server) = read_server_from_config() {
-        Ok(server)
+        server
     } else {
-        Err(format!(
+        return Err(format!(
             "No server URL provided. Use --server option or create {}",
             get_config_file_path().display()
-        ))
-    }
+        ));
+    };
+    
+    Ok(normalize_server_url(&raw_url))
 }
 
 #[tokio::main]
