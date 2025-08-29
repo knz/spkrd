@@ -1,0 +1,12 @@
+[package]
+name = "spkrd-client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "client"
+path = "client.rs"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+reqwest = "0.11"
