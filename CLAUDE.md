@@ -35,11 +35,47 @@ Content Guidelines:
 - **Structure**: Flexible format optimized for the specific conversation type
 - **Persistence**: Never delete changelog files after work completion
 
-## High-level map of the repository structure for quick context
+## Project Overview
 
-- `docs/design`: core technical docs including data model
-- `docs/product-docs`: product and strategy documentation
-- `src/timecond` — Ancillary time conditions library (git submodule)
+**SPKRD** is a FreeBSD speaker device network server written in Rust that provides HTTP access to the system's `/dev/speaker` device for remote melody playback.
+
+### Core Purpose
+- Exposes FreeBSD's built-in speaker device over HTTP API
+- Allows remote melody playback from any system that can make HTTP requests
+- Handles device concurrency with automatic retry logic and configurable timeouts
+
+### Technical Architecture
+- **HTTP Server**: Tokio/Axum-based async server with single PUT `/play` endpoint
+- **Device Management**: Smart retry logic for busy device handling (1s intervals, configurable timeout)
+- **Process Management**: Full daemon support with PID files and syslog integration
+- **Input Validation**: Melody length limits (≤1000 chars) and UTF-8 validation
+- **Logging**: Dual-mode logging (syslog for daemon, stderr for foreground) with debug support
+
+### Key Dependencies
+- `tokio` + `axum`: Async HTTP server framework
+- `clap`: CLI argument parsing with derive features
+- `daemonize`: Background process management
+- `syslog` + `log`: Structured logging with facility support
+- `chrono`: Time handling for request logging
+
+### Repository Structure
+- `src/`: Core Rust source code
+  - `main.rs`: CLI entry point and daemon initialization
+  - `server.rs`: HTTP server implementation with Axum
+  - `speaker.rs`: Device handling and retry logic
+  - `error.rs`: Error type definitions
+  - `lib.rs`: Library interface
+- `examples/`: Client implementations (Rust + Go) with build system
+- `tests/`: Integration tests using temporary files as mock devices
+- `rc.d/spkrd`: FreeBSD service script for system integration
+- `API.md`: Detailed HTTP API documentation
+- `Makefile`: System installation targets for FreeBSD deployment
+
+### Development Context
+- Target Platform: FreeBSD (requires `/dev/speaker` device)
+- Testing: Can use regular files as mock devices for development
+- Build: Standard Cargo workflow, with additional client builds in examples/
+- Deployment: System service installation via Makefile with rc.d integration
 
 ## Require clarification and plan approval before making code changes
 
