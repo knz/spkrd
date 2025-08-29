@@ -1,4 +1,5 @@
 // Rust client example for SPKRD server
+// Supports verbose output mode via -v flag to show informational messages
 
 use clap::Parser;
 use std::fs;
@@ -12,6 +13,10 @@ struct Args {
     /// Server URL (overrides config file)
     #[arg(short, long)]
     server: Option<String>,
+    
+    /// Enable verbose output
+    #[arg(short, long)]
+    verbose: bool,
     
     /// Melody to play
     melody: String,
@@ -61,8 +66,10 @@ async fn main() {
     let client = reqwest::Client::new();
     let url = format!("{}/play", server_url);
     
-    println!("Playing melody: {}", melody);
-    println!("Server: {}", url);
+    if args.verbose {
+        println!("Playing melody: {}", melody);
+        println!("Server: {}", url);
+    }
     
     match client.put(&url)
         .body(melody.clone())
@@ -71,7 +78,11 @@ async fn main() {
     {
         Ok(response) => {
             match response.status().as_u16() {
-                200 => println!("✓ Melody played successfully"),
+                200 => {
+                    if args.verbose {
+                        println!("✓ Melody played successfully");
+                    }
+                }
                 400 => {
                     let error = response.text().await.unwrap_or_else(|_| "Bad request".to_string());
                     eprintln!("✗ Invalid melody: {}", error);
