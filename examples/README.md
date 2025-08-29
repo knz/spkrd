@@ -23,10 +23,12 @@ The provided Makefile supports building and installing the Rust client with conf
 All variables can be overridden on the command line:
 
 - `BUILD` - Build mode (default: `release`)
+
   - `make BUILD=debug` - Build in debug mode
   - `make BUILD=release` - Build in release mode (default)
 
 - `PROGRAM` - Installed binary name (default: `spkrc`)
+
   - `make PROGRAM=myclient install` - Install as 'myclient'
 
 - `DSTDIR` - Installation directory (default: `/usr/local/bin`)
@@ -134,7 +136,7 @@ spkcmd ls /nonexistent
 ### Audio Feedback
 
 - **Success (exit 0)**: Pleasant ascending notes
-- **Interrupted (exit 130)**: Silent (respects user cancellation)  
+- **Interrupted (exit 130)**: Silent (respects user cancellation)
 - **Standard errors (exit 1-127)**: Low warning tone
 - **Fatal errors (exit 128+)**: Urgent high tone
 
@@ -142,3 +144,70 @@ spkcmd ls /nonexistent
 
 - The `spkrc` client must be installed and available in PATH
 - Works best with a running spkrd server for immediate audio feedback
+
+## Shell Integration
+
+For automatic audio feedback on all command line operations, source the provided shell configuration files.
+
+### Available Configurations
+
+- `spkcmd-bash.sh` - Bash integration using function wrappers
+- `spkcmd-zsh.sh` - Zsh integration using function wrappers and preexec
+
+### Installation
+
+Add one of these lines to your shell configuration file:
+
+```bash
+# For bash users - add to ~/.bashrc or ~/.bash_profile
+source /usr/local/share/spkrd/examples/spkcmd-bash.sh
+
+# For zsh users - add to ~/.zshrc
+source /usr/local/share/spkrd/examples/spkcmd-zsh.sh
+```
+
+### Usage
+
+Once loaded, audio feedback is automatically enabled for most commands:
+
+```bash
+# These commands will automatically get audio feedback
+make test          # Success: pleasant ascending notes, Error: warning/error tones
+cargo build        # Same audio feedback based on exit status
+git commit -m "..."
+npm install
+```
+
+### Control Functions
+
+- `spkcmd_on` - Enable automatic audio feedback (default state)
+- `spkcmd_off` - Disable automatic audio feedback
+
+### Filtered Commands
+
+The integration automatically excludes audio feedback for:
+
+- **Built-in commands**: cd, pwd, echo, export, etc.
+- **Fast commands**: ls, cat, grep, which, etc.
+- **Interactive commands**: vim, ssh, less, man, etc.
+- **Background jobs**: Any command ending with `&`
+- **Already wrapped**: Commands already using spkcmd
+
+This ensures audio feedback only occurs for meaningful operations while avoiding noise from quick utility commands.
+
+### Requirements
+
+- `spkrc` must be installed and available in PATH
+- A running spkrd server for audio feedback
+- Compatible shell (bash 4.0+ or zsh 5.0+)
+
+### Dynamic Command Wrapping (Zsh Only)
+
+The zsh integration uses dynamic command wrapping that automatically creates audio feedback wrappers for external commands on first use:
+
+- **Priority commands** (make, git, cargo) are pre-wrapped for immediate availability
+- **Additional commands** are wrapped dynamically when first encountered in interactive sessions
+- **Interactive sessions only**: Dynamic wrapping only works in interactive zsh sessions, not in non-interactive contexts like `zsh -c` or scripts
+- **First use delay**: New commands get audio feedback starting from their second use in the session
+
+This approach provides intelligent audio feedback while maintaining performance and avoiding unnecessary wrapper creation for unused commands.
