@@ -35,9 +35,8 @@ name=spkrd
 rcvar=spkrd_enable
 
 command="/usr/local/bin/${name}"
-command_args="--daemon --pidfile ${pidfile} ${spkrd_flags}"
-
 pidfile="/var/run/${name}.pid"
+command_args="--daemon --pidfile ${pidfile} ${spkrd_flags}"
 required_files="/usr/local/bin/${name}"
 
 load_rc_config $name
