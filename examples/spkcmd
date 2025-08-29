@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# spkcmd - Audio feedback command wrapper for spkrd
+#
+# This script acts as a prefix to other commands, providing audio feedback
+# based on the command's exit status using the spkrc client. Optimized for
+# use with the spkrd Rust client.
+#
+# Usage: spkcmd <command> [args...]
+# Example: spkcmd make test
+#          spkcmd cargo build --release
+#
+# Audio feedback based on exit codes:
+# - Success (0): Happy two-note ascending melody (f16g16)
+# - Interrupted (130): Silent (user cancelled with Ctrl+C)
+# - Standard errors (<128): Low single note (o1c.)
+# - Fatal errors (>=128): High error chord (o2ec)
+
+# Execute the provided command with all arguments
+"$@"
+s=$?
+
+# Select melody based on exit status
+melody=""
+if [ $s = 0 ]; then
+    # Success: pleasant ascending notes
+    melody=f16g16
+elif [ $s = 130 ]; then
+    # Interrupted by user (Ctrl+C): no sound to avoid annoyance
+    :
+elif [ $s -lt 128 ]; then
+    # Standard error: low warning tone
+    melody=o1c.
+else
+    # Fatal error (signals, crashes): urgent high tone
+    melody=o2ec
+fi
+
+# Play audio feedback if melody is set
+# Assumes spkrc is available in PATH
+spkrc $melody
+
+# Preserve original exit status
+exit $s

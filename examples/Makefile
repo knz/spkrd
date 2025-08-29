@@ -19,3 +19,4 @@ clean:
 
 install: all
 	install -m 755 $(BINARY_PATH) $(DSTDIR)/$(PROGRAM)
+	install -m 755 spkcmd $(DSTDIR)/spkcmd
