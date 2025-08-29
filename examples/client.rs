@@ -1,20 +1,62 @@
 // Rust client example for SPKRD server
 
-use std::env;
+use clap::Parser;
+use std::fs;
+use std::path::PathBuf;
 use std::process;
+
+#[derive(Parser)]
+#[command(name = "spkrd-client")]
+#[command(about = "A client for the SPKRD server")]
+struct Args {
+    /// Server URL (overrides config file)
+    #[arg(short, long)]
+    server: Option<String>,
+    
+    /// Melody to play
+    melody: String,
+}
+
+fn get_config_file_path() -> PathBuf {
+    let home = std::env::var("HOME").expect("HOME environment variable not set");
+    PathBuf::from(home).join(".spkrc")
+}
+
+fn read_server_from_config() -> Option<String> {
+    let config_path = get_config_file_path();
+    match fs::read_to_string(&config_path) {
+        Ok(content) => Some(content.trim().to_string()),
+        Err(_) => None,
+    }
+}
+
+fn get_server_url(args: &Args) -> Result<String, String> {
+    if let Some(server) = &args.server {
+        Ok(server.clone())
+    } else if let Some(server) = read_server_from_config() {
+        Ok(server)
+    } else {
+        Err(format!(
+            "No server URL provided. Use --server option or create {}",
+            get_config_file_path().display()
+        ))
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args = Args::parse();
     
-    if args.len() != 3 {
-        eprintln!("Usage: {} <server_url> <melody>", args[0]);
-        eprintln!("Example: {} http://192.168.1.100:8080 \"cdefgab\"", args[0]);
-        process::exit(1);
-    }
+    let server_url = match get_server_url(&args) {
+        Ok(url) => url,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            eprintln!("Example: {} --server http://192.168.1.100:8080 \"cdefgab\"", env!("CARGO_PKG_NAME"));
+            process::exit(1);
+        }
+    };
     
-    let server_url = &args[1];
-    let melody = &args[2];
+    let melody = &args.melody;
     
     let client = reqwest::Client::new();
     let url = format!("{}/play", server_url);
