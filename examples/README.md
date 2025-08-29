@@ -16,7 +16,7 @@ The provided Makefile supports building and installing the Rust client with conf
 
 - `make all` - Build the Rust client
 - `make clean` - Remove build artifacts
-- `make install` - Build and install the client binary
+- `make install` - Build and install the client binary and spkcmd utility
 
 ### Configuration Variables
 
@@ -115,3 +115,30 @@ go build client.go
 - Complex melody: `"t150l8 c d e f g f e d c p l4 g"`
 
 For complete melody syntax, see the [FreeBSD speaker(4) manual](https://man.freebsd.org/cgi/man.cgi?query=speaker&apropos=0&sektion=0&manpath=FreeBSD+14.3-RELEASE+and+Ports&arch=default&format=html).
+
+## Audio Feedback Utility
+
+The `spkcmd` script provides audio feedback for command exit codes, optimized for use with the spkrd Rust client.
+
+### Usage
+
+Use `spkcmd` as a prefix to any command to get audio feedback based on the exit status:
+
+```bash
+# Add audio feedback to any command
+spkcmd make test
+spkcmd cargo build --release
+spkcmd ls /nonexistent
+```
+
+### Audio Feedback
+
+- **Success (exit 0)**: Pleasant ascending notes
+- **Interrupted (exit 130)**: Silent (respects user cancellation)  
+- **Standard errors (exit 1-127)**: Low warning tone
+- **Fatal errors (exit 128+)**: Urgent high tone
+
+### Requirements
+
+- The `spkrc` client must be installed and available in PATH
+- Works best with a running spkrd server for immediate audio feedback
