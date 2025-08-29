@@ -54,6 +54,71 @@ cargo build --release  # Rust client
 go build client.go      # Go client
 ```
 
+### System-Wide Installation
+
+For production deployment as a system service on FreeBSD:
+
+```bash
+# Install to system directories (default: /usr/local)
+make install
+
+# Or install to custom location
+make install DSTDIR=/usr/local
+
+# Or install with custom program name
+make install PROGRAM=my-spkrd
+```
+
+This installs:
+- Binary to `/usr/local/bin/spkrd`
+- FreeBSD rc.d script to `/usr/local/etc/rc.d/spkrd`
+
+### Service Configuration
+
+Add the following to `/etc/rc.conf` to enable the service:
+
+```bash
+# Enable the service
+spkrd_enable="YES"
+
+# Configure server options via flags
+spkrd_flags="--port 8080 --device /dev/speaker --retry-timeout 30"
+```
+
+**Available configuration flags:**
+- `--port <port>` - Server port (default: 8080)
+- `--device <path>` - Speaker device path (default: /dev/speaker)  
+- `--retry-timeout <secs>` - Device retry timeout (default: 30)
+
+**Example configurations:**
+
+```bash
+# Custom port
+spkrd_flags="--port 3000"
+
+# Different device and port
+spkrd_flags="--device /tmp/test-speaker --port 9000"
+
+# Extended timeout
+spkrd_flags="--retry-timeout 60 --port 8080"
+```
+
+### Service Management
+
+```bash
+# Start the service
+service spkrd start
+
+# Stop the service
+service spkrd stop
+
+# Restart the service
+service spkrd restart
+
+# Check service status
+service spkrd status
+```
+
 ## Usage
 
 ### Starting the Server
