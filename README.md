@@ -92,19 +92,20 @@ curl -X PUT http://localhost:8080/play -d "cdefgab"
 
 ### Example Clients
 
-#### Rust Client
+The `examples/` directory contains ready-to-use client implementations in Rust and Go.
 
+**Quick Examples:**
 ```bash
+# Rust client with config file
 cd examples
-cargo run --bin client http://server:8080 "t120l8cdegreg"
-```
+echo "http://server:8080" > ~/.spkrc
+./target/release/client "cdefgab"
 
-#### Go Client
-
-```bash
-cd examples
+# Go client
 go run client.go http://server:8080 "cdefgab"
 ```
+
+For complete client documentation, build instructions, and usage examples, see **[examples/README.md](examples/README.md)**.
 
 #### Python Example
 
