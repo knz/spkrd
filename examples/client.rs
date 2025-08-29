@@ -56,7 +56,7 @@ async fn main() {
         Ok(url) => url,
         Err(err) => {
             eprintln!("Error: {}", err);
-            eprintln!("Example: {} --server http://192.168.1.100:8080 \"cdefgab\"", env!("CARGO_PKG_NAME"));
+            eprintln!("Example: {} --server http://192.168.1.100:1111 \"cdefgab\"", env!("CARGO_PKG_NAME"));
             process::exit(1);
         }
     };

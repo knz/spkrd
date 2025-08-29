@@ -84,11 +84,11 @@ Add the following to `/etc/rc.conf` to enable the service:
 spkrd_enable="YES"
 
 # Configure server options via flags
-spkrd_flags="--port 8080 --device /dev/speaker --retry-timeout 30"
+spkrd_flags="--port 1111 --device /dev/speaker --retry-timeout 30"
 ```
 
 **Available configuration flags:**
-- `--port <port>` - Server port (default: 8080)
+- `--port <port>` - Server port (default: 1111)
 - `--device <path>` - Speaker device path (default: /dev/speaker)  
 - `--retry-timeout <secs>` - Device retry timeout (default: 30)
 - `--daemon` - Run as background daemon (automatically added by rc.d)
@@ -105,13 +105,13 @@ spkrd_flags="--port 3000"
 spkrd_flags="--device /tmp/test-speaker --port 9000"
 
 # Extended timeout
-spkrd_flags="--retry-timeout 60 --port 8080"
+spkrd_flags="--retry-timeout 60 --port 1111"
 
 # Enable debug logging (shows client requests in logs)
-spkrd_flags="--debug --port 8080"
+spkrd_flags="--debug --port 1111"
 
 # Custom PID file location for non-root execution
-spkrd_flags="--pidfile /tmp/spkrd.pid --port 8080"
+spkrd_flags="--pidfile /tmp/spkrd.pid --port 1111"
 ```
 
 ### Service Management
@@ -159,7 +159,7 @@ SPKRD supports flexible logging with different outputs depending on execution mo
 tail -f /var/log/daemon.log | grep spkrd
 
 # Run with debug logging in foreground
-./spkrd --debug --port 8080
+./spkrd --debug --port 1111
 
 # Service with debug logging (via rc.conf)
 spkrd_flags="--debug"
@@ -169,7 +169,7 @@ service spkrd restart
 **Sample log output:**
 ```
 # Startup (always logged)
-Jan 29 10:30:15 hostname spkrd[1234]: Starting spkrd server: port=8080, retry_timeout=30s, device=/dev/speaker, daemon=true, pidfile=/var/run/spkrd.pid, debug=false
+Jan 29 10:30:15 hostname spkrd[1234]: Starting spkrd server: port=1111, retry_timeout=30s, device=/dev/speaker, daemon=true, pidfile=/var/run/spkrd.pid, debug=false
 
 # Error (always logged)
 Jan 29 10:30:16 hostname spkrd[1234]: Device error for request from 192.168.1.100: Permission denied
@@ -184,7 +184,7 @@ Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100 completed succe
 ### Starting the Server
 
 ```bash
-# Basic usage (default port 8080, device /dev/speaker)
+# Basic usage (default port 1111, device /dev/speaker)
 ./target/release/spkrd
 
 # Custom configuration
@@ -202,7 +202,7 @@ Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100 completed succe
 
 ### Command Line Options
 
-- `--port` - Server port (default: 8080)
+- `--port` - Server port (default: 1111)
 - `--retry-timeout` - Device retry timeout in seconds (default: 30)
 - `--device` - Path to speaker device (default: /dev/speaker)
 - `--daemon` - Run as background daemon
@@ -214,7 +214,7 @@ Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100 completed succe
 #### Play a Melody
 
 ```bash
-curl -X PUT http://localhost:8080/play -d "cdefgab"
+curl -X PUT http://localhost:1111/play -d "cdefgab"
 ```
 
 #### Response Codes
@@ -232,11 +232,11 @@ The `examples/` directory contains ready-to-use client implementations in Rust a
 ```bash
 # Rust client with config file
 cd examples
-echo "http://server:8080" > ~/.spkrc
+echo "http://server:1111" > ~/.spkrc
 ./target/release/client "cdefgab"
 
 # Go client
-go run client.go http://server:8080 "cdefgab"
+go run client.go http://server:1111 "cdefgab"
 ```
 
 For complete client documentation, build instructions, and usage examples, see **[examples/README.md](examples/README.md)**.
@@ -246,7 +246,7 @@ For complete client documentation, build instructions, and usage examples, see *
 ```python
 import requests
 
-response = requests.put('http://server:8080/play', data='cdefgab')
+response = requests.put('http://server:1111/play', data='cdefgab')
 if response.status_code == 200:
     print("Melody played successfully")
 else:
@@ -328,7 +328,7 @@ Use a regular file as a mock device for testing:
 ./target/release/spkrd --device /tmp/test-speaker
 
 # Send melody
-curl -X PUT http://localhost:8080/play -d "cdefgab"
+curl -X PUT http://localhost:1111/play -d "cdefgab"
 
 # Check result
 cat /tmp/test-speaker

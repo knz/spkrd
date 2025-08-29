@@ -66,20 +66,20 @@ The Rust client supports flexible server configuration via command line options 
 
 ```bash
 # Using --server option
-./target/release/client --server http://server:8080 "t120l8cdefgab"
+./target/release/client --server http://server:1111 "t120l8cdefgab"
 
 # Short form
-./target/release/client -s http://192.168.1.100:8080 "cdefgab"
+./target/release/client -s http://192.168.1.100:1111 "cdefgab"
 
 # Build and run with cargo
-cargo run --bin client -- --server http://server:8080 "t120l8cdefgab"
+cargo run --bin client -- --server http://server:1111 "t120l8cdefgab"
 ```
 
 #### Config File Usage
 
 ```bash
 # Create config file with server URL
-echo "http://server:8080" > ~/.spkrc
+echo "http://server:1111" > ~/.spkrc
 
 # Now you can run without --server option
 ./target/release/client "cdefgab"
@@ -101,11 +101,11 @@ echo "http://server:8080" > ~/.spkrc
 
 ```bash
 # Basic usage
-go run client.go http://server:8080 "cdefgab"
+go run client.go http://server:1111 "cdefgab"
 
 # Or build first
 go build client.go
-./client http://server:8080 "cdefgab"
+./client http://server:1111 "cdefgab"
 ```
 
 ## Example Melodies
