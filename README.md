@@ -12,7 +12,9 @@ SPKRD exposes FreeBSD's built-in speaker device over HTTP, allowing you to play 
 - **Device Retry Logic** - Automatically retries when device is busy (1s intervals, configurable timeout)
 - **Input Validation** - Melody length limits and UTF-8 validation
 - **Configurable Device Path** - Use custom device paths for testing or alternative devices
-- **Request Logging** - Timestamps, client IPs, and printable melody content
+- **Daemon Support** - Run as background daemon with PID file management
+- **Flexible Logging** - Syslog for daemon mode, stderr for foreground, with debug logging support
+- **Request Logging** - Timestamps, client IPs, and printable melody content (debug mode only)
 - **Example Clients** - Ready-to-use clients in Rust and Go
 
 ## FreeBSD Speaker Device
@@ -89,6 +91,9 @@ spkrd_flags="--port 8080 --device /dev/speaker --retry-timeout 30"
 - `--port <port>` - Server port (default: 8080)
 - `--device <path>` - Speaker device path (default: /dev/speaker)  
 - `--retry-timeout <secs>` - Device retry timeout (default: 30)
+- `--daemon` - Run as background daemon (automatically added by rc.d)
+- `--pidfile <path>` - PID file path (default: /var/run/spkrd.pid)
+- `--debug/-d` - Enable debug logging including client request details
 
 **Example configurations:**
 
@@ -101,6 +106,12 @@ spkrd_flags="--device /tmp/test-speaker --port 9000"
 
 # Extended timeout
 spkrd_flags="--retry-timeout 60 --port 8080"
+
+# Enable debug logging (shows client requests in logs)
+spkrd_flags="--debug --port 8080"
+
+# Custom PID file location for non-root execution
+spkrd_flags="--pidfile /tmp/spkrd.pid --port 8080"
 ```
 
 ### Service Management
@@ -119,6 +130,55 @@ service spkrd restart
 service spkrd status
 ```
 
+### Logging
+
+SPKRD supports flexible logging with different outputs depending on execution mode:
+
+#### Daemon Mode (--daemon)
+- Uses **syslog** with facility `daemon`
+- Logs go to system log (typically `/var/log/daemon.log` or `/var/log/messages`)
+- View logs: `tail -f /var/log/daemon.log | grep spkrd`
+
+#### Foreground Mode (default)
+- Uses **stderr** with timestamps
+- Logs appear directly in terminal
+- Suitable for development and manual testing
+
+#### Log Levels
+- **Default**: Startup messages (with all configuration) and errors only
+- **Debug** (`--debug/-d`): Adds client request logging including:
+  - Client IP address
+  - Printable characters from melody data
+  - Request status and retry count
+  - Completion status
+
+#### Examples
+
+```bash
+# View daemon logs on FreeBSD
+tail -f /var/log/daemon.log | grep spkrd
+
+# Run with debug logging in foreground
+./spkrd --debug --port 8080
+
+# Service with debug logging (via rc.conf)
+spkrd_flags="--debug"
+service spkrd restart
+```
+
+**Sample log output:**
+```
+# Startup (always logged)
+Jan 29 10:30:15 hostname spkrd[1234]: Starting spkrd server: port=8080, retry_timeout=30s, device=/dev/speaker, daemon=true, pidfile=/var/run/spkrd.pid, debug=false
+
+# Error (always logged)
+Jan 29 10:30:16 hostname spkrd[1234]: Device error for request from 192.168.1.100: Permission denied
+
+# Debug request logging (--debug only)
+Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100: melody=t120l4cdefgab
+Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100 completed successfully after 0 retries
+```
+
 ## Usage
 
 ### Starting the Server
@@ -132,6 +192,12 @@ service spkrd status
 
 # For testing with a regular file
 ./target/release/spkrd --device /tmp/test-speaker
+
+# Run as daemon
+./target/release/spkrd --daemon
+
+# Run with debug logging
+./target/release/spkrd --debug
 ```
 
 ### Command Line Options
@@ -139,6 +205,9 @@ service spkrd status
 - `--port` - Server port (default: 8080)
 - `--retry-timeout` - Device retry timeout in seconds (default: 30)
 - `--device` - Path to speaker device (default: /dev/speaker)
+- `--daemon` - Run as background daemon
+- `--pidfile` - Path to PID file (default: /var/run/spkrd.pid)
+- `--debug/-d` - Enable debug logging including client request details
 
 ### API Usage
 
