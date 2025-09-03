@@ -19,7 +19,7 @@ $(BINARY_PATH):
 clean:
 	cargo clean
 
-install: all
+install: $(BINARY_PATH)
 	install -d $(DSTDIR)/bin
 	install -m 755 $(TARGET_DIR)/$(PROGRAM) $(DSTDIR)/bin/$(PROGRAM)
 	install -d $(DSTDIR)/etc/rc.d
