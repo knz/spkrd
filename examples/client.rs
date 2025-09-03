@@ -1,18 +1,26 @@
 // Rust client example for SPKRD server
-// Supports verbose output mode via -v flag to show informational messages
+// Supports multiple servers via CLI args or config file, with concurrent broadcast
+// and verbose output mode via -v flag to show per-server results
 
 use clap::Parser;
 use std::fs;
 use std::path::PathBuf;
 use std::process;
 
+#[derive(Debug)]
+struct ServerResult {
+    server_url: String,
+    success: bool,
+    error_message: Option<String>,
+}
+
 #[derive(Parser)]
 #[command(name = "spkrd-client")]
 #[command(about = "A client for the SPKRD server")]
 struct Args {
-    /// Server URL (overrides config file)
-    #[arg(short, long)]
-    server: Option<String>,
+    /// Server URL (overrides config file, can be specified multiple times)
+    #[arg(short, long, action = clap::ArgAction::Append)]
+    server: Vec<String>,
     
     /// Enable verbose output
     #[arg(short, long)]
@@ -27,11 +35,18 @@ fn get_config_file_path() -> PathBuf {
     PathBuf::from(home).join(".spkrc")
 }
 
-fn read_server_from_config() -> Option<String> {
+fn read_servers_from_config() -> Vec<String> {
     let config_path = get_config_file_path();
     match fs::read_to_string(&config_path) {
-        Ok(content) => Some(content.trim().to_string()),
-        Err(_) => None,
+        Ok(content) => {
+            content
+                .lines()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(|line| line.to_string())
+                .collect()
+        }
+        Err(_) => Vec::new(),
     }
 }
 
@@ -61,80 +76,155 @@ fn normalize_server_url(url: &str) -> String {
     normalized
 }
 
-fn get_server_url(args: &Args) -> Result<String, String> {
-    let raw_url = if let Some(server) = &args.server {
-        server.clone()
-    } else if let Some(server) = read_server_from_config() {
-        server
+fn get_server_urls(args: &Args) -> Result<Vec<String>, String> {
+    let raw_urls = if !args.server.is_empty() {
+        args.server.clone()
     } else {
-        return Err(format!(
-            "No server URL provided. Use --server option or create {}",
-            get_config_file_path().display()
-        ));
+        let config_servers = read_servers_from_config();
+        if config_servers.is_empty() {
+            return Err(format!(
+                "No server URLs provided. Use --server option or create {}",
+                get_config_file_path().display()
+            ));
+        }
+        config_servers
     };
     
-    Ok(normalize_server_url(&raw_url))
+    let normalized_urls = raw_urls
+        .iter()
+        .map(|url| normalize_server_url(url))
+        .collect();
+    
+    Ok(normalized_urls)
+}
+
+async fn send_melody_to_server(server_url: String, melody: String, verbose: bool) -> ServerResult {
+    let client = reqwest::Client::new();
+    let url = format!("{}/play", server_url);
+    
+    if verbose {
+        println!("Sending to: {}", url);
+    }
+    
+    match client.put(&url)
+        .body(melody)
+        .send()
+        .await
+    {
+        Ok(response) => {
+            match response.status().as_u16() {
+                200 => ServerResult {
+                    server_url: server_url,
+                    success: true,
+                    error_message: None,
+                },
+                400 => {
+                    let error = response.text().await.unwrap_or_else(|_| "Bad request".to_string());
+                    ServerResult {
+                        server_url: server_url,
+                        success: false,
+                        error_message: Some(format!("Invalid melody: {}", error)),
+                    }
+                }
+                503 => {
+                    let error = response.text().await.unwrap_or_else(|_| "Service unavailable".to_string());
+                    ServerResult {
+                        server_url: server_url,
+                        success: false,
+                        error_message: Some(format!("Device busy: {}", error)),
+                    }
+                }
+                500 => {
+                    let error = response.text().await.unwrap_or_else(|_| "Internal server error".to_string());
+                    ServerResult {
+                        server_url: server_url,
+                        success: false,
+                        error_message: Some(format!("Server error: {}", error)),
+                    }
+                }
+                status => {
+                    ServerResult {
+                        server_url: server_url,
+                        success: false,
+                        error_message: Some(format!("Unexpected response: HTTP {}", status)),
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            ServerResult {
+                server_url: server_url,
+                success: false,
+                error_message: Some(format!("Connection error: {}", e)),
+            }
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
     
-    let server_url = match get_server_url(&args) {
-        Ok(url) => url,
+    let server_urls = match get_server_urls(&args) {
+        Ok(urls) => urls,
         Err(err) => {
             eprintln!("Error: {}", err);
-            eprintln!("Example: {} --server http://192.168.1.100:1111 \"cdefgab\"", env!("CARGO_PKG_NAME"));
+            eprintln!("Example: {} --server http://192.168.1.100:1111 --server http://192.168.1.101:1111 \"cdefgab\"", env!("CARGO_PKG_NAME"));
             process::exit(1);
         }
     };
     
     let melody = &args.melody;
     
-    let client = reqwest::Client::new();
-    let url = format!("{}/play", server_url);
-    
     if args.verbose {
         println!("Playing melody: {}", melody);
-        println!("Server: {}", url);
+        println!("Sending to {} server(s)", server_urls.len());
     }
     
-    match client.put(&url)
-        .body(melody.clone())
-        .send()
-        .await
-    {
-        Ok(response) => {
-            match response.status().as_u16() {
-                200 => {
+    // Send melody to all servers concurrently
+    let tasks: Vec<_> = server_urls
+        .into_iter()
+        .map(|server_url| {
+            let melody = melody.clone();
+            tokio::spawn(send_melody_to_server(server_url, melody, args.verbose))
+        })
+        .collect();
+    
+    // Wait for all requests to complete
+    let results = futures::future::join_all(tasks).await;
+    
+    let mut success_count = 0;
+    let mut total_count = 0;
+    
+    for task_result in results {
+        match task_result {
+            Ok(server_result) => {
+                total_count += 1;
+                if server_result.success {
+                    success_count += 1;
                     if args.verbose {
-                        println!("✓ Melody played successfully");
+                        println!("✓ {} - Melody played successfully", server_result.server_url);
+                    }
+                } else {
+                    if let Some(error) = server_result.error_message {
+                        eprintln!("✗ {} - {}", server_result.server_url, error);
                     }
                 }
-                400 => {
-                    let error = response.text().await.unwrap_or_else(|_| "Bad request".to_string());
-                    eprintln!("✗ Invalid melody: {}", error);
-                    process::exit(1);
-                }
-                503 => {
-                    let error = response.text().await.unwrap_or_else(|_| "Service unavailable".to_string());
-                    eprintln!("✗ Device busy: {}", error);
-                    process::exit(1);
-                }
-                500 => {
-                    let error = response.text().await.unwrap_or_else(|_| "Internal server error".to_string());
-                    eprintln!("✗ Server error: {}", error);
-                    process::exit(1);
-                }
-                status => {
-                    eprintln!("✗ Unexpected response: HTTP {}", status);
-                    process::exit(1);
-                }
+            }
+            Err(e) => {
+                total_count += 1;
+                eprintln!("✗ Task failed: {}", e);
             }
         }
-        Err(e) => {
-            eprintln!("✗ Connection error: {}", e);
-            process::exit(1);
-        }
+    }
+    
+    if args.verbose {
+        println!("Results: {}/{} servers succeeded", success_count, total_count);
+    }
+    
+    if success_count > 0 {
+        process::exit(0);
+    } else {
+        process::exit(1);
     }
 }
