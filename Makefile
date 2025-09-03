@@ -3,21 +3,17 @@
 # Configuration variables
 DSTDIR ?= /usr/local
 PROGRAM ?= spkrd
-BUILD ?= release
-
-# Build target selection
-ifeq ($(BUILD),release)
-    CARGO_FLAGS = --release
-    TARGET_DIR = target/release
-else
-    CARGO_FLAGS = 
-    TARGET_DIR = target/debug
-endif
+PROFILE ?= release # can be 'dev' for debugging
+TARGET_DIR = target/$(PROFILE)
+BINARY_PATH = $(TARGET_DIR)/$(PROGRAM)
+CARGO_FLAGS = --profile $(PROFILE)
 
 # Default target
 .PHONY: all clean install
 
-all:
+all: $(BINARY_PATH)
+
+$(BINARY_PATH):
 	cargo build $(CARGO_FLAGS)
 
 clean:
