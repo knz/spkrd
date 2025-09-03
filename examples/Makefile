@@ -18,6 +18,6 @@ $(BINARY_PATH):
 clean:
 	cargo clean
 
-install: all
+install: $(BINARY_PATH)
 	install -m 755 $(BINARY_PATH) $(DSTDIR)/$(PROGRAM)
 	install -m 755 spkcmd $(DSTDIR)/spkcmd
