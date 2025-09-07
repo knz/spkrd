@@ -181,17 +181,19 @@ async fn main() {
         println!("Sending to {} server(s)", server_urls.len());
     }
     
-    // Send melody to all servers concurrently
-    let tasks: Vec<_> = server_urls
-        .into_iter()
-        .map(|server_url| {
-            let melody = melody.clone();
-            tokio::spawn(send_melody_to_server(server_url, melody, args.verbose))
-        })
-        .collect();
+    // Send melody to all servers concurrently and collect results
+    let mut handles = Vec::new();
+    for server_url in server_urls {
+        let melody = melody.clone();
+        let handle = tokio::spawn(send_melody_to_server(server_url, melody, args.verbose));
+        handles.push(handle);
+    }
     
     // Wait for all requests to complete
-    let results = futures::future::join_all(tasks).await;
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await);
+    }
     
     let mut success_count = 0;
     let mut total_count = 0;
