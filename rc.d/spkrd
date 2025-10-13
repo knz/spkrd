@@ -9,7 +9,7 @@
 #
 # Available flags:
 #   --port <port>           Server port (default: 1111)
-#   --device <path>         Speaker device path (default: /dev/speaker)  
+#   --device <path>         Speaker device path (default: /dev/speaker)
 #   --retry-timeout <secs>  Device retry timeout (default: 30)
 #   --daemon                Run as daemon (automatically added by rc.d)
 #   --pidfile <path>        PID file path (default: /var/run/spkrd.pid)
@@ -29,15 +29,22 @@
 #   - View logs: tail -f /var/log/daemon.log | grep spkrd
 #   - Non-root users: Use custom --pidfile (e.g., /tmp/spkrd.pid)
 
+# PROVIDE: spkrd
+# REQUIRE: DAEMON
+# KEYWORD: shutdown
+
 . /etc/rc.subr
 
 name=spkrd
 rcvar=spkrd_enable
+
+load_rc_config $name
+
+: ${spkrd_enable:="NO"}
 
 command="/usr/local/bin/${name}"
 pidfile="/var/run/${name}.pid"
 command_args="--daemon --pidfile ${pidfile} ${spkrd_flags}"
 required_files="/usr/local/bin/${name}"
 
-load_rc_config $name
 run_rc_command "$1"
