@@ -13,7 +13,8 @@ async fn test_server_with_file_device() {
     // Start the server on a random available port
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
-        let _ = spkrd::server::run(port, Duration::from_secs(30), device_path, false).await;
+        let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
     });
 
     // Wait a moment for the server to start
@@ -52,7 +53,8 @@ async fn test_melody_validation() {
     // Start the server on a random available port
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
-        let _ = spkrd::server::run(port, Duration::from_secs(30), device_path, false).await;
+        let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
     });
 
     // Wait a moment for the server to start
@@ -92,7 +94,8 @@ async fn test_multiple_requests() {
     // Start the server on a random available port
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
-        let _ = spkrd::server::run(port, Duration::from_secs(30), device_path, false).await;
+        let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
     });
 
     // Wait a moment for the server to start
@@ -138,7 +141,8 @@ async fn test_invalid_utf8() {
     // Start the server on a random available port
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
-        let _ = spkrd::server::run(port, Duration::from_secs(30), device_path, false).await;
+        let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
     });
 
     // Wait a moment for the server to start

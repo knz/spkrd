@@ -8,6 +8,8 @@ pub enum SpeakerError {
     DeviceError(std::io::Error),
     InvalidMelody(String),
     Timeout,
+    #[cfg(feature = "cpal")]
+    CpalError(String),
 }
 
 impl fmt::Display for SpeakerError {
@@ -17,6 +19,8 @@ impl fmt::Display for SpeakerError {
             SpeakerError::DeviceError(e) => write!(f, "Device error: {}", e),
             SpeakerError::InvalidMelody(msg) => write!(f, "Invalid melody: {}", msg),
             SpeakerError::Timeout => write!(f, "Operation timed out"),
+            #[cfg(feature = "cpal")]
+            SpeakerError::CpalError(msg) => write!(f, "CPAL error: {}", msg),
         }
     }
 }

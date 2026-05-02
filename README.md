@@ -1,15 +1,35 @@
-# SPKRD - FreeBSD Speaker Network Server
+# SPKRD - Speaker Network Server
 
-A network server that provides HTTP access to FreeBSD's `/dev/speaker` device for remote melody playback.
+A network server that exposes a melody-playback endpoint over HTTP. On
+FreeBSD it can drive the kernel `/dev/speaker` device directly; on any
+other host (Linux, macOS, Windows) it can synthesise the same melodies
+through the system audio output via [CPAL].
+
+[CPAL]: https://github.com/RustAudio/cpal
 
 ## Overview
 
-SPKRD exposes FreeBSD's built-in speaker device over HTTP, allowing you to play melodies remotely from any system that can make HTTP requests. The server handles device concurrency automatically with configurable retry logic.
+SPKRD accepts FreeBSD-style melody strings over HTTP and plays them
+back through one of two backends:
+
+- **`freebsd-speaker`** — writes the melody to the kernel
+  `/dev/speaker` character device. The kernel driver does the
+  synthesis on the PC speaker hardware.
+- **`cpal`** — parses the melody in user space (a faithful Rust port
+  of the FreeBSD `spkr.c` interpreter) and renders it to audio via
+  CPAL using a configurable waveform (square / band-limited square /
+  sine / triangle / sawtooth).
+
+In `--output=auto` (the default) the server probes the configured
+device path and uses `freebsd-speaker` if it exists, falling back to
+`cpal` otherwise. Both backends share the same HTTP surface, retry
+logic, validation, and one-melody-at-a-time semantics.
 
 ## Features
 
 - **HTTP API** - Simple PUT endpoint for melody playback
-- **Device Retry Logic** - Automatically retries when device is busy (1s intervals, configurable timeout)
+- **Two backends** - FreeBSD `/dev/speaker` or cross-platform CPAL audio output
+- **Device Retry Logic** - Automatically retries when busy (1s intervals, configurable timeout)
 - **Input Validation** - Melody length limits and UTF-8 validation
 - **Configurable Device Path** - Use custom device paths for testing or alternative devices
 - **Daemon Support** - Run as background daemon with PID file management
@@ -40,12 +60,14 @@ Example: `"t120l4 c d e f g a b o5c"`
 
 - Rust 1.70+ (for server)
 - Go 1.19+ (for Go client example)
-- FreeBSD system with `/dev/speaker` device
+- FreeBSD with `/dev/speaker` for the `freebsd-speaker` backend; any
+  CPAL-supported host (Linux/ALSA, macOS/CoreAudio, Windows/WASAPI,
+  JACK, …) for the `cpal` backend
 
 ### Building
 
 ```bash
-# Clone and build the server
+# Clone and build the server with the default features (includes CPAL)
 git clone <repository-url>
 cd spkrd
 cargo build --release
@@ -55,6 +77,26 @@ cd examples
 cargo build --release  # Rust client
 go build client.go      # Go client
 ```
+
+### Build features
+
+The `cpal` Cargo feature controls whether the user-space audio
+synthesis backend is compiled in. It is **enabled by default**.
+
+```bash
+# Default build: both backends available
+cargo build --release
+
+# FreeBSD: typically you only want the kernel backend. Disabling
+# the `cpal` feature removes the cpal dependency and shrinks the
+# binary; --output=cpal and the related --waveform/--volume/
+# --sample-rate/--cpal-host/--cpal-device flags become unavailable.
+cargo build --release --no-default-features
+```
+
+When built without the `cpal` feature, `--output=auto` will fail at
+startup if the configured device path does not exist (rather than
+silently falling back to a non-existent CPAL backend).
 
 ### System-Wide Installation
 
@@ -89,11 +131,41 @@ spkrd_flags="--port 1111 --device /dev/speaker --retry-timeout 30"
 
 **Available configuration flags:**
 - `--port <port>` - Server port (default: 1111)
-- `--device <path>` - Speaker device path (default: /dev/speaker)  
+- `--device <path>` - Speaker device path (default: /dev/speaker)
+- `--output <mode>` - Output backend: `auto`, `freebsd-speaker`, or `cpal` (default: auto; `cpal` only available when built with the `cpal` feature)
 - `--retry-timeout <secs>` - Device retry timeout (default: 30)
 - `--daemon` - Run as background daemon (automatically added by rc.d)
 - `--pidfile <path>` - PID file path (default: /var/run/spkrd.pid)
 - `--debug/-d` - Enable debug logging including client request details
+
+**CPAL-only flags (only present when built with the `cpal` feature):**
+- `--waveform <wf>` - `pc-speaker` (default), `square-bandlimited` (sounds nice), `square`, `sine`, `triangle`, or `sawtooth`
+- `--volume <v>` - Output volume in `[0.0, 1.0]` (default: 0.25)
+- `--sample-rate <hz>` - Override the device's default sample rate
+- `--cpal-host <name>` - CPAL host backend (e.g. ALSA, JACK, CoreAudio); defaults to the platform default
+- `--cpal-device <name>` - Output device name; defaults to the host's default output
+
+The `pc-speaker` waveform is a faithful simulation of a modern
+piezoelectric PC speaker: note frequencies are quantised to what the
+Intel 8254 PIT can actually produce (`1,193,182 Hz / divisor`, integer
+divisor), a square wave at that frequency is processed through a 3-stage
+biquad chain (high-pass / midrange peak / low-pass) tuned to a small
+piezo disc, and the output is soft-clipped via `tanh` to mimic driver
+saturation. The square-wave phase is reset at every note (mirroring the
+PIT counter reset the FreeBSD kernel performs in `timer_spkr_setfreq`),
+so consecutive notes — even at the same pitch — get the mechanical
+"plink" articulation a real piezo produces. Filter state is preserved
+across notes and rests, so the speaker rings out naturally on note-off
+rather than cutting silently.
+
+The `square` waveform is the kernel-faithful raw output: phase is reset
+at every note (matching the PIT counter reset) and no envelope is
+applied, so consecutive notes have hard amplitude-step boundary clicks
+that match what FreeBSD's unfiltered `/dev/speaker` output sounds like
+through a modern DAC. If you want click-suppressed alternatives, the
+remaining software waveforms (`square-bandlimited`, `sine`, `triangle`,
+`sawtooth`) keep phase continuity across notes and apply a 5 ms
+attack/release envelope to fade in/out each note.
 
 **Example configurations:**
 
@@ -205,9 +277,17 @@ Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100 completed succe
 - `--port` - Server port (default: 1111)
 - `--retry-timeout` - Device retry timeout in seconds (default: 30)
 - `--device` - Path to speaker device (default: /dev/speaker)
+- `--output` - Output backend: `auto` (default), `freebsd-speaker`, or `cpal` (the `cpal` value is available only when built with the `cpal` feature)
 - `--daemon` - Run as background daemon
 - `--pidfile` - Path to PID file (default: /var/run/spkrd.pid)
 - `--debug/-d` - Enable debug logging including client request details
+
+When built with the `cpal` feature, the following additional flags are
+available (and are otherwise hidden):
+
+- `--waveform`, `--volume`, `--sample-rate`, `--cpal-host`,
+  `--cpal-device` — see the configuration-flags section above for
+  details.
 
 ### API Usage
 
@@ -338,7 +418,7 @@ cat /tmp/test-speaker
 
 This project is licensed under the BSD 2-Clause License. See the [LICENSE](LICENSE) file for details.
 
-Copyright (c) 2025, Raphael Poss
+Copyright (c) 2025-2026, Raphael Poss
 
 ## Contributing
 

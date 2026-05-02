@@ -18,6 +18,11 @@ daemonize = "0.5"
 log = "0.4"
 env_logger = "0.10"
 syslog = "6.0"
+cpal = { version = "0.16", optional = true }
+
+[features]
+default = ["cpal"]
+cpal = ["dep:cpal"]
 
 [dev-dependencies]
 reqwest = "0.11"
