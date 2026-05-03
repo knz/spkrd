@@ -1,7 +1,9 @@
 // HTTP server setup and routing. Holds the chosen output backend (either the
 // FreeBSD /dev/speaker writer or, when compiled with the `cpal` feature, the
-// CPAL audio renderer) and dispatches /play requests accordingly. Error
-// mapping to HTTP status codes is shared between the available backends.
+// CPAL audio renderer) and dispatches /play requests accordingly. The melody
+// length limit is configured at startup and threaded through to whichever
+// backend validates the incoming body. Error mapping to HTTP status codes is
+// shared between the available backends.
 
 #[cfg(feature = "cpal")]
 use crate::cpal_backend::CpalBackend;
@@ -33,6 +35,7 @@ pub enum Backend {
 struct AppState {
     retry_timeout: Duration,
     backend: Backend,
+    max_melody_length: usize,
     debug: bool,
 }
 
@@ -40,11 +43,13 @@ pub async fn run(
     port: u16,
     retry_timeout: Duration,
     backend: Backend,
+    max_melody_length: usize,
     debug: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         retry_timeout,
         backend,
+        max_melody_length,
         debug,
     };
 
@@ -99,14 +104,21 @@ async fn play_handler(
                 client_addr,
                 state.retry_timeout,
                 device_path,
+                state.max_melody_length,
                 state.debug,
             )
             .await
         }
         #[cfg(feature = "cpal")]
         Backend::Cpal(b) => {
-            b.play_melody(&melody, client_addr, state.retry_timeout, state.debug)
-                .await
+            b.play_melody(
+                &melody,
+                client_addr,
+                state.retry_timeout,
+                state.max_melody_length,
+                state.debug,
+            )
+            .await
         }
     };
 

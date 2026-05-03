@@ -14,7 +14,7 @@ async fn test_server_with_file_device() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start
@@ -54,13 +54,13 @@ async fn test_melody_validation() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
     
-    // Send a melody that's too long (> 1000 characters)
+    // Send a melody that's too long (> 1000 bytes, the default limit)
     let melody = "c".repeat(1001);
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/play", port);
@@ -75,7 +75,7 @@ async fn test_melody_validation() {
     // Verify the response is a bad request
     assert_eq!(response.status(), 400);
     let error_message = response.text().await.unwrap();
-    assert!(error_message.contains("exceeds 1000 characters"));
+    assert!(error_message.contains("exceeds 1000 bytes"));
 
     // Verify nothing was written to the file
     let file_contents = fs::read_to_string(temp_file.path()).expect("Failed to read temp file");
@@ -95,7 +95,7 @@ async fn test_multiple_requests() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start
@@ -142,7 +142,7 @@ async fn test_invalid_utf8() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, false).await;
+        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start

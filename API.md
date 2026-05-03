@@ -25,7 +25,8 @@ Plays a melody on the FreeBSD speaker device.
 - Body: Melody string in FreeBSD speaker format
 
 **Request Body:**
-- Maximum 1000 characters
+- Maximum body size in bytes is configured at server startup via
+  `--max-melody-length` (default 1000, hard ceiling 1 MiB).
 - FreeBSD speaker melody format (see `man 4 speaker`)
 - Example: `"cdefgab"`
 
@@ -52,7 +53,7 @@ curl -X PUT http://localhost:1111/play -d "t120l8cdegreg"
 | Status Code | Meaning | Example |
 |-------------|---------|---------|
 | 200 | Success | Empty body |
-| 400 | Invalid melody | "Melody exceeds 1000 characters" |
+| 400 | Invalid melody | "Melody exceeds 1000 bytes" (limit reflects `--max-melody-length`) |
 | 503 | Device busy/timeout | "Device busy - request timed out" |
 | 500 | Server error | "Device error: Permission denied" |
 
@@ -72,10 +73,12 @@ Example: `"t120l4 c d e f g a b o5c"`
 ## Server Configuration
 
 ```bash
-spkrd --port 1111 --retry-timeout 30 --device /dev/speaker
+spkrd --port 1111 --retry-timeout 30 --device /dev/speaker --max-melody-length 1000
 ```
 
 Options:
 - `--port`: Server port (default: 1111)
 - `--retry-timeout`: Device retry timeout in seconds (default: 30)
 - `--device`: Path to speaker device (default: /dev/speaker)
+- `--max-melody-length`: Maximum body length in bytes; must be in
+  `1..=1048576` (default: 1000)

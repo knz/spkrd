@@ -75,6 +75,13 @@ struct Args {
 
     #[arg(
         long,
+        default_value_t = 1000,
+        help = "Maximum melody body length in bytes (1..=1048576)"
+    )]
+    max_melody_length: usize,
+
+    #[arg(
+        long,
         value_enum,
         default_value_t = OutputMode::Auto,
         help = OUTPUT_HELP,
@@ -244,9 +251,26 @@ fn build_backend(args: &Args, resolved: OutputMode) -> Result<Backend, Box<dyn s
     }
 }
 
+// Hard ceiling on the melody length limit. The body is held in memory before
+// validation, so an operator-supplied limit above this is rejected at startup
+// to avoid plausible-misconfiguration OOMs.
+const MAX_MELODY_LENGTH_CEILING: usize = 1024 * 1024;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let retry_timeout = Duration::from_secs(args.retry_timeout);
+
+    if args.max_melody_length == 0 {
+        eprintln!("spkrd: --max-melody-length must be at least 1");
+        process::exit(1);
+    }
+    if args.max_melody_length > MAX_MELODY_LENGTH_CEILING {
+        eprintln!(
+            "spkrd: --max-melody-length {} exceeds ceiling of {} bytes (1 MiB)",
+            args.max_melody_length, MAX_MELODY_LENGTH_CEILING
+        );
+        process::exit(1);
+    }
 
     init_logging(args.daemon, args.debug);
 
@@ -275,9 +299,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolved = resolve_output(args.output, &args.device);
 
     info!(
-        "Starting spkrd: port={}, retry_timeout={}s, output={:?} (resolved={:?}), device={}, daemon={}, pidfile={}, debug={}",
+        "Starting spkrd: port={}, retry_timeout={}s, max_melody_length={}, output={:?} (resolved={:?}), device={}, daemon={}, pidfile={}, debug={}",
         args.port,
         args.retry_timeout,
+        args.max_melody_length,
         args.output,
         resolved,
         args.device,
@@ -309,7 +334,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
 
     runtime.block_on(async move {
-        match server::run(args.port, retry_timeout, backend, args.debug).await {
+        match server::run(
+            args.port,
+            retry_timeout,
+            backend,
+            args.max_melody_length,
+            args.debug,
+        )
+        .await
+        {
             Ok(_) => {
                 info!("Server shutdown completed");
                 Ok(())

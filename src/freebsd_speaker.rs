@@ -17,10 +17,11 @@ pub async fn play_melody(
     client_addr: SocketAddr,
     retry_timeout: Duration,
     device_path: &str,
+    max_melody_length: usize,
     debug: bool,
 ) -> Result<u32, SpeakerError> {
-    validate_melody(melody)?;
-    
+    validate_melody(melody, max_melody_length)?;
+
     if debug {
         log_request(client_addr, melody);
     }
@@ -44,10 +45,10 @@ pub async fn play_melody(
     }
 }
 
-fn validate_melody(melody: &str) -> Result<(), SpeakerError> {
-    if melody.len() > 1000 {
+fn validate_melody(melody: &str, max_melody_length: usize) -> Result<(), SpeakerError> {
+    if melody.len() > max_melody_length {
         return Err(SpeakerError::InvalidMelody(
-            "Melody exceeds 1000 characters".to_string(),
+            format!("Melody exceeds {} bytes", max_melody_length),
         ));
     }
     Ok(())

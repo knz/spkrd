@@ -183,16 +183,16 @@ impl CpalBackend {
         melody: &str,
         client_addr: SocketAddr,
         retry_timeout: Duration,
+        max_melody_length: usize,
         debug: bool,
     ) -> Result<u32, SpeakerError> {
-        validate_melody(melody)?;
+        validate_melody(melody, max_melody_length)?;
         if debug {
             log_request(client_addr, melody);
         }
 
         // Synthesis is pure CPU work — render in the async parent. (Even a
-        // 1000-char melody is well under a millisecond at typical sample
-        // rates.)
+        // 1 MiB melody is well under a millisecond at typical sample rates.)
         let events = mml::render(melody);
         let sr = self.config.sample_rate.0;
         let buffer = synth(&events, sr, self.waveform, self.volume);
@@ -362,10 +362,10 @@ impl CpalBackend {
     }
 }
 
-fn validate_melody(melody: &str) -> Result<(), SpeakerError> {
-    if melody.len() > 1000 {
+fn validate_melody(melody: &str, max_melody_length: usize) -> Result<(), SpeakerError> {
+    if melody.len() > max_melody_length {
         return Err(SpeakerError::InvalidMelody(
-            "Melody exceeds 1000 characters".to_string(),
+            format!("Melody exceeds {} bytes", max_melody_length),
         ));
     }
     Ok(())
