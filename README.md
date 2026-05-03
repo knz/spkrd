@@ -61,8 +61,8 @@ Example: `"t120l4 c d e f g a b o5c"`
 - Rust 1.70+ (for server)
 - Go 1.19+ (for Go client example)
 - FreeBSD with `/dev/speaker` for the `freebsd-speaker` backend; any
-  CPAL-supported host (Linux/ALSA, macOS/CoreAudio, Windows/WASAPI,
-  JACK, …) for the `cpal` backend
+  CPAL-supported host (Linux/ALSA, PipeWire, PulseAudio, JACK,
+  macOS/CoreAudio, Windows/WASAPI, …) for the `cpal` backend
 
 ### Building
 
@@ -70,29 +70,45 @@ Example: `"t120l4 c d e f g a b o5c"`
 # Clone and build the server with the default features (includes CPAL)
 git clone <repository-url>
 cd spkrd
-cargo build --release
+  make && make install   # Build and install server
 
 # Build example clients
 cd examples
-cargo build --release  # Rust client
-go build client.go      # Go client
+  cargo build --release  # Rust client
+  go build client.go     # Go client
+  make && make install   # Install Rust client
 ```
 
 ### Build features
 
-The `cpal` Cargo feature controls whether the user-space audio
-synthesis backend is compiled in. It is **enabled by default**.
+| Feature | Default | What it adds | System library required |
+|---------|---------|--------------|-------------------------|
+| `cpal` | yes | CPAL audio backend (ALSA on Linux) | — |
+| `jack` | no | JACK host for `--cpal-host JACK` | `libjack` |
+| `pulseaudio` | no | PulseAudio host for `--cpal-host PulseAudio` | `libpulse` |
+| `pipewire` | no | PipeWire host for `--cpal-host PipeWire` | `libpipewire`, `libclang` (bindgen) |
 
 ```bash
-# Default build: both backends available
+# Default build: CPAL backend with ALSA
 cargo build --release
 
-# FreeBSD: typically you only want the kernel backend. Disabling
-# the `cpal` feature removes the cpal dependency and shrinks the
-# binary; --output=cpal and the related --waveform/--volume/
-# --sample-rate/--cpal-host/--cpal-device flags become unavailable.
+# With JACK and PulseAudio support
+cargo build --release --features jack,pulseaudio
+
+# With all Linux audio backends
+cargo build --release --features jack,pulseaudio,pipewire
+
+# FreeBSD: kernel backend only (removes cpal dependency entirely)
 cargo build --release --no-default-features
 ```
+
+The features can be customized in the `Makefile` via the
+variable `FEATURES`.
+
+When the `pipewire` or `pulseaudio` features are enabled, cpal's default
+host selection picks the best available backend automatically at runtime:
+PipeWire (if running) → PulseAudio (if running) → ALSA. JACK is never
+selected automatically; it must be requested explicitly via `--cpal-host JACK`.
 
 When built without the `cpal` feature, `--output=auto` will fail at
 startup if the configured device path does not exist (rather than
@@ -142,7 +158,11 @@ spkrd_flags="--port 1111 --device /dev/speaker --retry-timeout 30"
 - `--waveform <wf>` - `pc-speaker` (default), `square-bandlimited` (sounds nice), `square`, `sine`, `triangle`, or `sawtooth`
 - `--volume <v>` - Output volume in `[0.0, 1.0]` (default: 0.25)
 - `--sample-rate <hz>` - Override the device's default sample rate
-- `--cpal-host <name>` - CPAL host backend (e.g. ALSA, JACK, CoreAudio); defaults to the platform default
+- `--cpal-host <name>` - CPAL host backend; matching is case-insensitive. Valid values:
+  `ALSA` (default on Linux), `PipeWire` (requires `--features pipewire`),
+  `PulseAudio` (requires `--features pulseaudio`), `JACK` (requires `--features jack`),
+  `CoreAudio` (macOS), `WASAPI` (Windows). When omitted, cpal picks the best available
+  host automatically (PipeWire > PulseAudio > ALSA on Linux).
 - `--cpal-device <name>` - Output device name; defaults to the host's default output
 
 The `pc-speaker` waveform is a faithful simulation of a modern

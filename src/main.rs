@@ -128,7 +128,13 @@ struct Args {
     sample_rate: Option<u32>,
 
     #[cfg(feature = "cpal")]
-    #[arg(long, help = "[cpal] host name (e.g. ALSA, JACK, CoreAudio)")]
+    #[arg(
+        long,
+        help = "[cpal] audio host: ALSA (default), PipeWire (requires --features pipewire), \
+                PulseAudio (requires --features pulseaudio), JACK (requires --features jack). \
+                Matching is case-insensitive. When omitted, cpal picks the best available host \
+                automatically (PipeWire > PulseAudio > ALSA)."
+    )]
     cpal_host: Option<String>,
 
     #[cfg(feature = "cpal")]

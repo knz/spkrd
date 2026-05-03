@@ -1,21 +1,28 @@
-# systemd unit for spkrd - speaker device network server
+# systemd user unit for spkrd - speaker device network server
 #
-# Install to /usr/local/lib/systemd/system/ (or wherever DSTDIR resolves to).
+# Installed as a user service so spkrd has access to the per-user
+# PulseAudio / PipeWire socket. Each user manages their own instance.
 #
-# To enable and start after installation:
-#   systemctl daemon-reload
-#   systemctl enable spkrd
-#   systemctl start spkrd
+# Install to /usr/local/lib/systemd/user/ (or wherever DSTDIR resolves to):
+#   make install
+#
+# Then enable for the current user:
+#   systemctl --user daemon-reload
+#   systemctl --user enable spkrd
+#   systemctl --user start spkrd
+#
+# To start automatically on boot even when not logged in:
+#   loginctl enable-linger $USER
 #
 # To override flags without editing this file, create a drop-in:
-#   systemctl edit spkrd
+#   systemctl --user edit spkrd
 # and add an [Service] section, e.g.:
 #   [Service]
 #   ExecStart=
 #   ExecStart=/usr/local/bin/spkrd --port 3000 --debug
 #
-# Logs are written to stderr and captured by journald:
-#   journalctl -u spkrd -f
+# Logs are captured by journald:
+#   journalctl --user -u spkrd -f
 
 [Unit]
 Description=spkrd speaker device network server
@@ -23,8 +30,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/spkrd --port 1111
+ExecStart=/usr/local/bin/spkrd --port 1111 --cpal-host=PulseAudio
 Restart=on-failure
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

@@ -18,11 +18,30 @@ daemonize = "0.5"
 log = "0.4"
 env_logger = "0.10"
 syslog = "6.0"
-cpal = { version = "0.16", optional = true }
+cpal = { version = ">=0.17", optional = true }
 
 [features]
 default = ["cpal"]
+# Core CPAL audio output backend (synthesises MML to PCM via cpal).
 cpal = ["dep:cpal"]
+# JACK Audio Connection Kit support. Requires libjack at build and run time.
+# Select at runtime with --cpal-host JACK.
+jack = ["cpal", "cpal/jack"]
+# PulseAudio support. Requires libpulse at build and run time.
+# Selected automatically by cpal's default host when PipeWire is unavailable.
+# Can also be forced with --cpal-host PulseAudio.
+pulseaudio = ["cpal", "cpal/pulseaudio"]
+# PipeWire support. Requires libpipewire at build and run time.
+# Selected automatically by cpal's default host when available (highest priority).
+# Can also be forced with --cpal-host PipeWire.
+pipewire = ["cpal", "cpal/pipewire"]
+
+# cpal 0.18 adds PipeWire and PulseAudio backends (not yet published to
+# crates.io). Pinned to a fork carrying the PulseAudio stream-leak fix
+# (RustAudio/cpal#1188); revert to upstream once that PR merges and
+# upstream cpal >=0.18 is released.
+[patch.crates-io]
+cpal = { git = "https://github.com/knz/cpal", branch = "fix/pulseaudio-stream-leak-1188" }
 
 [dev-dependencies]
 reqwest = "0.11"

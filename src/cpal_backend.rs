@@ -133,8 +133,8 @@ impl CpalBackend {
                     .output_devices()
                     .map_err(|e| SpeakerError::CpalError(format!("output_devices: {}", e)))?;
                 for d in devs {
-                    if let Ok(n) = d.name() {
-                        if n == *name {
+                    if let Ok(desc) = d.description() {
+                        if desc.name() == name.as_str() {
                             found = Some(d);
                             break;
                         }
@@ -155,13 +155,13 @@ impl CpalBackend {
         let sample_format = default_cfg.sample_format();
         let mut stream_cfg: StreamConfig = default_cfg.into();
         if let Some(sr) = cfg.sample_rate {
-            stream_cfg.sample_rate = cpal::SampleRate(sr);
+            stream_cfg.sample_rate = sr;
         }
 
         info!(
             "CPAL backend: device={:?}, sample_rate={}, channels={}, format={:?}, waveform={:?}, volume={}",
-            device.name().unwrap_or_else(|_| "<unknown>".into()),
-            stream_cfg.sample_rate.0,
+            device.description().map(|d| d.name().to_owned()).unwrap_or_else(|_| "<unknown>".into()),
+            stream_cfg.sample_rate,
             stream_cfg.channels,
             sample_format,
             cfg.waveform,
@@ -194,7 +194,7 @@ impl CpalBackend {
         // Synthesis is pure CPU work — render in the async parent. (Even a
         // 1 MiB melody is well under a millisecond at typical sample rates.)
         let events = mml::render(melody);
-        let sr = self.config.sample_rate.0;
+        let sr = self.config.sample_rate;
         let buffer = synth(&events, sr, self.waveform, self.volume);
 
         if buffer.is_empty() {
@@ -298,7 +298,7 @@ impl CpalBackend {
         let stream = self
             .device
             .build_output_stream(
-                &self.config,
+                self.config,
                 move |out: &mut [T], _info: &cpal::OutputCallbackInfo| {
                     // If the parent future was dropped, write zeros for the
                     // remainder of this callback and signal end-of-buffer.
