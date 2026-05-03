@@ -1,0 +1,30 @@
+# systemd unit for spkrd - speaker device network server
+#
+# Install to /usr/local/lib/systemd/system/ (or wherever DSTDIR resolves to).
+#
+# To enable and start after installation:
+#   systemctl daemon-reload
+#   systemctl enable spkrd
+#   systemctl start spkrd
+#
+# To override flags without editing this file, create a drop-in:
+#   systemctl edit spkrd
+# and add an [Service] section, e.g.:
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/local/bin/spkrd --port 3000 --debug
+#
+# Logs are written to stderr and captured by journald:
+#   journalctl -u spkrd -f
+
+[Unit]
+Description=spkrd speaker device network server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/spkrd --port 1111
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
