@@ -118,6 +118,59 @@ go build client.go
 
 For complete melody syntax, see the [FreeBSD speaker(4) manual](https://man.freebsd.org/cgi/man.cgi?query=speaker&apropos=0&sektion=0&manpath=FreeBSD+14.3-RELEASE+and+Ports&arch=default&format=html).
 
+## Bundled Tunes
+
+A small collection of ready-to-play melodies is provided under
+`examples/tunes/` as `.mml` files (Music Macro Language, the notation accepted
+by the FreeBSD `speaker(4)` device).
+
+| File                                        | Tune                          |
+|---------------------------------------------|-------------------------------|
+| `dance-of-the-cuckoos.mml`                  | Dance of the Cuckoos          |
+| `fur-elise.mml`                             | Beethoven — Für Elise         |
+| `happy-birthday.mml`                        | Happy Birthday to You         |
+| `jingle-bells.mml`                          | Jingle Bells                  |
+| `mary-had-a-little-lamb.mml`                | Mary Had a Little Lamb        |
+| `ode-to-joy.mml`                            | Beethoven — Ode to Joy        |
+| `super-mario-bros.mml`                      | Super Mario Bros. theme       |
+| `twinkle-twinkle-little-star.mml`           | Twinkle, Twinkle, Little Star |
+
+### Playing a bundled tune with `spkrc`
+
+The `spkrc` client takes the melody as a command-line argument, so feed the
+file's contents in via shell command substitution. Whitespace and newlines
+inside the melody string are ignored by the speaker driver, so the multi-line
+`.mml` format works directly:
+
+```bash
+# Assuming ~/.spkrc holds the server URL
+spkrc "$(cat examples/tunes/fur-elise.mml)"
+
+# Or with an explicit server
+spkrc -s http://server:1111 "$(cat examples/tunes/ode-to-joy.mml)"
+```
+
+A quick way to audition every bundled tune in turn:
+
+```bash
+for f in examples/tunes/*.mml; do
+    echo "Playing $(basename "$f" .mml)"
+    spkrc "$(cat "$f")"
+done
+```
+
+### Adding your own tunes
+
+Drop additional `.mml` files into `examples/tunes/` using the same convention.
+Two things to keep in mind:
+
+- The server enforces a **1000-character** limit on the melody string, so
+  trim or split very long pieces.
+- `super-mario-bros.mml` uses `~` (tie/sustain) characters that come from a
+  non-FreeBSD MML dialect; the `speaker(4)` grammar does not define `~`, so
+  that particular file may produce unexpected results or an error on a real
+  FreeBSD speaker device. It is kept as-is for reference.
+
 ## Audio Feedback Utility
 
 The `spkcmd` script provides audio feedback for command exit codes, optimized for use with the spkrd Rust client.
