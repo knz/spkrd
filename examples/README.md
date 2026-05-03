@@ -134,6 +134,12 @@ by the FreeBSD `speaker(4)` device).
 | `ode-to-joy.mml`                            | Beethoven — Ode to Joy        |
 | `super-mario-bros.mml`                      | Super Mario Bros. theme       |
 | `twinkle-twinkle-little-star.mml`           | Twinkle, Twinkle, Little Star |
+| `bach.mml`                                  | J.S. Bach                     |
+
+NB: `bach.ml` needs a longer melody length limit configured on the
+server. This is supported with the CPAL back-end but cannot be played
+directly on the FreeBSD speaker driver. You can manually split it into
+multiple smaller tunes.
 
 ### Playing a bundled tune with `spkrc`
 
