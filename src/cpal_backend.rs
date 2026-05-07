@@ -15,7 +15,7 @@
 use crate::error::SpeakerError;
 use crate::mml::{self, Event};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
+use cpal::{BufferSize, FromSample, SampleFormat, SizedSample, StreamConfig};
 use log::{debug, info, warn};
 use std::f32::consts::PI;
 use std::net::SocketAddr;
@@ -158,12 +158,27 @@ impl CpalBackend {
             stream_cfg.sample_rate = sr;
         }
 
+        // Pin the callback period to ~10 ms (target buffer ~20 ms) instead of
+        // the backend default. Required for the cpal pulseaudio host on
+        // pipewire-pulse: with BufferSize::Default the cpal backend sends an
+        // all-u32::MAX BufferAttr ("server pick"), and pipewire-pulse picks a
+        // ~2-second initial pre-buffer. The very first data_callback then
+        // receives the entire 2 s buffer at once, exhausts a finite melody on
+        // the first call, and run_stream proceeds to drop the stream long
+        // before the audio has actually played out — pipewire-pulse discards
+        // the rest. An explicit small Fixed buffer makes pipewire-pulse honor
+        // tlength and deliver Requests in real-time chunks, restoring the
+        // periodic-callback pattern other cpal backends already follow. Tracked
+        // upstream as RustAudio/cpal#1190; revisit once that lands.
+        stream_cfg.buffer_size = BufferSize::Fixed(stream_cfg.sample_rate / 100);
+
         info!(
-            "CPAL backend: device={:?}, sample_rate={}, channels={}, format={:?}, waveform={:?}, volume={}",
+            "CPAL backend: device={:?}, sample_rate={}, channels={}, format={:?}, buffer_size={:?}, waveform={:?}, volume={}",
             device.description().map(|d| d.name().to_owned()).unwrap_or_else(|_| "<unknown>".into()),
             stream_cfg.sample_rate,
             stream_cfg.channels,
             sample_format,
+            stream_cfg.buffer_size,
             cfg.waveform,
             cfg.volume,
         );
@@ -353,7 +368,8 @@ impl CpalBackend {
 
         // Add a small tail so the device can flush buffered samples before we
         // drop the stream — except when we're aborting, where we want
-        // cancellation to be snappy.
+        // cancellation to be snappy. Sized for the ~20 ms target buffer that
+        // BufferSize::Fixed(sample_rate/100) configures in CpalBackend::new.
         if !abort.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(50));
         }
