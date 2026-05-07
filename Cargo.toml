@@ -11,13 +11,13 @@ categories = ["network-programming", "hardware-support"]
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
-axum = "0.7"
+axum = "0.8"
 clap = { version = "4.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 daemonize = "0.5"
 log = "0.4"
-env_logger = "0.10"
-syslog = "6.0"
+env_logger = "0.11"
+syslog = "7.0"
 cpal = { version = ">=0.17", optional = true }
 
 [features]
@@ -44,5 +44,5 @@ pipewire = ["cpal", "cpal/pipewire"]
 cpal = { git = "https://github.com/knz/cpal", branch = "fix/pulseaudio-stream-leak-1188" }
 
 [dev-dependencies]
-reqwest = "0.11"
+reqwest = "0.12"
 tempfile = "3.0"
