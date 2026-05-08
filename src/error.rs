@@ -1,4 +1,13 @@
-// Error types for speaker device operations
+// Error types for speaker device operations.
+//
+// CpalError vs CpalDisconnect: CpalError is fatal (unsupported config,
+// permission denied, generic backend error) — surfaced verbatim to the
+// HTTP client. CpalDisconnect is the "transient, retryable" subset
+// (host/device went away, stream invalidated) — the cpal backend's
+// acquire_and_play retry loop matches on this variant and rebuilds the
+// device on the same 1s cadence as the busy-device retry, sharing the
+// request's --retry-timeout window. Only after the timeout elapses does
+// a CpalDisconnect propagate up to the HTTP layer.
 
 use std::fmt;
 
@@ -10,6 +19,8 @@ pub enum SpeakerError {
     Timeout,
     #[cfg(feature = "cpal")]
     CpalError(String),
+    #[cfg(feature = "cpal")]
+    CpalDisconnect(String),
 }
 
 impl fmt::Display for SpeakerError {
@@ -21,6 +32,8 @@ impl fmt::Display for SpeakerError {
             SpeakerError::Timeout => write!(f, "Operation timed out"),
             #[cfg(feature = "cpal")]
             SpeakerError::CpalError(msg) => write!(f, "CPAL error: {}", msg),
+            #[cfg(feature = "cpal")]
+            SpeakerError::CpalDisconnect(msg) => write!(f, "CPAL disconnect: {}", msg),
         }
     }
 }

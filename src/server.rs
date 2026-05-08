@@ -172,5 +172,20 @@ async fn play_handler(
                 .body(format!("CPAL error: {}", msg))
                 .unwrap()
         }
+        // Reaching this case means acquire_and_play exhausted
+        // --retry-timeout while trying to rebuild the device. Surface as
+        // a 500 — the host/device is genuinely unreachable for now.
+        #[cfg(feature = "cpal")]
+        Err(SpeakerError::CpalDisconnect(msg)) => {
+            error!(
+                "CPAL disconnect for request from {} after retries: {}",
+                client_addr.ip(),
+                msg
+            );
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("CPAL disconnect: {}", msg))
+                .unwrap()
+        }
     }
 }

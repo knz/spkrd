@@ -12,21 +12,48 @@
 // is observed by the audio callback, mirroring FreeBSD spkr.c's PCATCH-aware
 // tsleep that lets a signal interrupt playback mid-string.
 //
-// PA-disconnect recovery: the cpal::Device and its underlying PulseAudio
-// client outlive a single request, but the PA reactor inside the
-// `pulseaudio` crate can die (e.g. on laptop suspend/resume, or
-// pipewire-pulse restart), leaving the cached Device permanently broken.
-// To recover, the device/config/sample_format trio lives behind a Mutex
-// (CpalBackend::state) and is rebuilt in-place via build_device_state when
-// build_output_stream returns a "disconnected"-shaped error. Rebuild
-// attempts share the request's --retry-timeout window on the same 1s
-// cadence as the busy-device retry. The original CpalConfig is retained
-// so rebuild can re-run host/device selection identically.
+// PA-disconnect recovery: the cpal::Device and its underlying audio
+// host client outlive a single request, but the host's reactor can
+// die (PulseAudio: laptop suspend/resume, pipewire-pulse restart;
+// PipeWire: server restart), leaving the cached Device permanently
+// broken. To recover, the device/config/sample_format trio lives
+// behind a Mutex (CpalBackend::state) and is rebuilt in-place via
+// build_device_state when build_output_stream / stream.play() / the
+// stream error callback report a disconnect-shaped ErrorKind
+// (StreamInvalidated, DeviceNotAvailable, HostUnavailable). Rebuild
+// attempts share the request's --retry-timeout window on the same
+// 1s cadence as the busy-device retry. The original CpalConfig is
+// retained so rebuild can re-run host/device selection identically.
+//
+// Stream error classification (classify_error): cpal's stream error
+// callback can fire for both fatal and non-fatal conditions. We
+// classify by ErrorKind into three buckets:
+//
+//   * Continues — RealtimeDenied, Xrun, DeviceChanged. cpal docs
+//     explicitly state playback continues. We log and ignore: the
+//     data callback keeps filling the buffer and signals end-of-
+//     stream naturally on exhaustion.
+//
+//   * Disconnect — StreamInvalidated, DeviceNotAvailable,
+//     HostUnavailable. The PA host maps Disconnected/Io errors to
+//     StreamInvalidated; PipeWire maps host death likewise. Surfaces
+//     as SpeakerError::CpalDisconnect, which acquire_and_play
+//     retries via rebuild_device.
+//
+//   * Fatal — everything else (UnsupportedConfig, PermissionDenied,
+//     BackendError, Other, ...). Surfaces as SpeakerError::CpalError
+//     and aborts the request immediately.
+//
+// Treating RealtimeDenied as fatal was the cause of an earlier bug
+// where every melody played for ~10 ms then stopped: cpal's PipeWire
+// host emits RealtimeDenied once at stream startup when RTKit refuses
+// to promote the audio thread, and the old error callback woke the
+// condvar, which dropped the stream before audio finished playing.
 
 use crate::error::SpeakerError;
 use crate::mml::{self, Event};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, FromSample, SampleFormat, SizedSample, StreamConfig};
+use cpal::{BufferSize, ErrorKind, FromSample, SampleFormat, SizedSample, StreamConfig};
 use log::{debug, info, warn};
 use std::f32::consts::PI;
 use std::net::SocketAddr;
@@ -254,9 +281,9 @@ impl CpalBackend {
             }
             match self.play_buffer(&buffer, Arc::clone(&abort)) {
                 Ok(()) => return Ok(retries),
-                Err(SpeakerError::CpalError(msg)) if is_disconnect_error(&msg) => {
+                Err(SpeakerError::CpalDisconnect(msg)) => {
                     if start.elapsed() >= retry_timeout {
-                        return Err(SpeakerError::CpalError(msg));
+                        return Err(SpeakerError::CpalDisconnect(msg));
                     }
                     warn!("CPAL backend disconnected ({}); rebuilding device", msg);
                     match self.rebuild_device() {
@@ -325,7 +352,12 @@ impl CpalBackend {
         let total = buffer.len();
         let cursor = Arc::new(Mutex::new(0usize));
         let done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        // None = no callback error so far. Some((class, msg)) = callback
+        // surfaced an error of this class; the wait returns and the
+        // post-wait code converts it to the right SpeakerError variant.
+        let stream_err: Arc<Mutex<Option<(ErrorClass, String)>>> = Arc::new(Mutex::new(None));
         let err_done = Arc::clone(&done);
+        let err_slot = Arc::clone(&stream_err);
 
         let buf: Arc<Vec<f32>> = Arc::new(buffer.to_vec());
         let cb_buf = Arc::clone(&buf);
@@ -368,19 +400,40 @@ impl CpalBackend {
                     }
                 },
                 move |err| {
-                    warn!("cpal stream error: {}", err);
-                    let (lock, cv) = &*err_done;
-                    let mut d = lock.lock().unwrap();
-                    *d = true;
-                    cv.notify_all();
+                    let class = classify_error(&err);
+                    match class {
+                        // Documented as "playback continues" — log and let
+                        // the data callback drive completion as usual.
+                        // Signalling done here would tear the stream down
+                        // mid-playback (the original RealtimeDenied bug).
+                        ErrorClass::Continues => {
+                            warn!("cpal stream error (non-fatal): {}", err);
+                        }
+                        ErrorClass::Disconnect | ErrorClass::Fatal => {
+                            warn!("cpal stream error: {}", err);
+                            // First error wins; if a Continues warning
+                            // already logged, we wouldn't have stored
+                            // anything anyway.
+                            let mut slot = err_slot.lock().unwrap();
+                            if slot.is_none() {
+                                *slot = Some((class, err.to_string()));
+                            }
+                            let (lock, cv) = &*err_done;
+                            let mut d = lock.lock().unwrap();
+                            if !*d {
+                                *d = true;
+                                cv.notify_all();
+                            }
+                        }
+                    }
                 },
                 None,
             )
-            .map_err(|e| SpeakerError::CpalError(format!("build_output_stream: {}", e)))?;
+            .map_err(|e| classify_to_speaker_error(&e, "build_output_stream"))?;
 
         stream
             .play()
-            .map_err(|e| SpeakerError::CpalError(format!("stream.play: {}", e)))?;
+            .map_err(|e| classify_to_speaker_error(&e, "stream.play"))?;
 
         let (lock, cv) = &*done;
         let mut d = lock.lock().unwrap();
@@ -388,6 +441,19 @@ impl CpalBackend {
             d = cv.wait(d).unwrap();
         }
         drop(d);
+
+        // Inspect the error slot before adding the flush tail or returning
+        // Ok: a fatal/disconnect callback may have woken us before the data
+        // callback exhausted the buffer.
+        if let Some((class, msg)) = stream_err.lock().unwrap().take() {
+            drop(stream);
+            return Err(match class {
+                ErrorClass::Disconnect => SpeakerError::CpalDisconnect(msg),
+                ErrorClass::Fatal => SpeakerError::CpalError(msg),
+                // Continues entries are never stored in the slot.
+                ErrorClass::Continues => unreachable!(),
+            });
+        }
 
         // Add a small tail so the device can flush buffered samples before we
         // drop the stream — except when we're aborting, where we want
@@ -492,17 +558,54 @@ fn log_device_state(state: &DeviceState, cfg: &CpalConfig) {
     );
 }
 
-// Heuristic: does an error message from build_output_stream / stream.play()
-// indicate the cached PulseAudio client has died and should be rebuilt?
-//
-// The cpal pulseaudio backend surfaces PA reactor death as a backend-
-// specific error whose Display contains "PulseAudio client disconnected".
-// Match case-insensitively on "disconnect" so both that string and any
-// future close-relatives ("client disconnect", "disconnected") trigger the
-// rebuild path. Other CPAL errors (invalid config, unsupported format)
-// remain fatal, preserving the existing fail-fast behavior.
-fn is_disconnect_error(msg: &str) -> bool {
-    msg.to_ascii_lowercase().contains("disconnect")
+// Three buckets a cpal error can fall into. See module-level comment for
+// the full rationale; in short: Continues = log-only, Disconnect =
+// rebuild-and-retry, Fatal = surface to the HTTP client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ErrorClass {
+    Continues,
+    Disconnect,
+    Fatal,
+}
+
+// Classify a cpal error by its ErrorKind. cpal 0.18+ exposes structured
+// kinds; matching on those is more robust than the prior
+// substring-on-message approach (which depended on the exact wording of
+// each backend's Display impl). The PA host maps ClientError::Disconnected
+// and Io errors to StreamInvalidated (cpal/src/host/pulseaudio/mod.rs);
+// PipeWire host death surfaces likewise. RealtimeDenied is the
+// PipeWire/ALSA RT-promotion-failure path explicitly documented as
+// non-fatal.
+fn classify_error(err: &cpal::Error) -> ErrorClass {
+    match err.kind() {
+        // Documented in cpal::ErrorKind as "Audio will still play" /
+        // "stream remains active" / "potential audio glitch".
+        ErrorKind::RealtimeDenied | ErrorKind::Xrun | ErrorKind::DeviceChanged => {
+            ErrorClass::Continues
+        }
+        // Transient host/device death; rebuild_device replaces the
+        // cached client and retry on the same 1s cadence.
+        ErrorKind::StreamInvalidated
+        | ErrorKind::DeviceNotAvailable
+        | ErrorKind::HostUnavailable => ErrorClass::Disconnect,
+        // Everything else (PermissionDenied, UnsupportedConfig,
+        // BackendError, Other, ...) is treated as fatal.
+        _ => ErrorClass::Fatal,
+    }
+}
+
+// Convert a cpal::Error from a synchronous call (build_output_stream /
+// stream.play()) into the matching SpeakerError variant. Continues-class
+// errors normally don't surface synchronously (they come via the error
+// callback during streaming), but if they do, treat them as fatal so the
+// caller doesn't loop forever — the synchronous path doesn't have a
+// "let it keep running" option.
+fn classify_to_speaker_error(err: &cpal::Error, ctx: &str) -> SpeakerError {
+    let msg = format!("{}: {}", ctx, err);
+    match classify_error(err) {
+        ErrorClass::Disconnect => SpeakerError::CpalDisconnect(msg),
+        ErrorClass::Fatal | ErrorClass::Continues => SpeakerError::CpalError(msg),
+    }
 }
 
 fn validate_melody(melody: &str, max_melody_length: usize) -> Result<(), SpeakerError> {
@@ -803,5 +906,23 @@ mod tests {
         assert_eq!(pit_quantize(440), 1193182 / 2712);
         // Zero-input guard.
         assert_eq!(pit_quantize(0), 0);
+    }
+
+    #[test]
+    fn classify_error_buckets() {
+        let mk = |k: ErrorKind| cpal::Error::new(k);
+        // Continues — playback proceeds normally per cpal docs.
+        assert_eq!(classify_error(&mk(ErrorKind::RealtimeDenied)), ErrorClass::Continues);
+        assert_eq!(classify_error(&mk(ErrorKind::Xrun)), ErrorClass::Continues);
+        assert_eq!(classify_error(&mk(ErrorKind::DeviceChanged)), ErrorClass::Continues);
+        // Disconnect — rebuild_device path.
+        assert_eq!(classify_error(&mk(ErrorKind::StreamInvalidated)), ErrorClass::Disconnect);
+        assert_eq!(classify_error(&mk(ErrorKind::DeviceNotAvailable)), ErrorClass::Disconnect);
+        assert_eq!(classify_error(&mk(ErrorKind::HostUnavailable)), ErrorClass::Disconnect);
+        // Fatal — surfaced to the HTTP client.
+        assert_eq!(classify_error(&mk(ErrorKind::PermissionDenied)), ErrorClass::Fatal);
+        assert_eq!(classify_error(&mk(ErrorKind::UnsupportedConfig)), ErrorClass::Fatal);
+        assert_eq!(classify_error(&mk(ErrorKind::BackendError)), ErrorClass::Fatal);
+        assert_eq!(classify_error(&mk(ErrorKind::Other)), ErrorClass::Fatal);
     }
 }
