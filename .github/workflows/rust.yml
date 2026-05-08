@@ -16,8 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Install ALSA development headers
-      run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+    - name: Install ALSA and D-BUS development headers
+      run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests
