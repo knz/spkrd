@@ -11,6 +11,17 @@
 // still playing in CPAL's audio thread. An abort flag installed by the parent
 // is observed by the audio callback, mirroring FreeBSD spkr.c's PCATCH-aware
 // tsleep that lets a signal interrupt playback mid-string.
+//
+// PA-disconnect recovery: the cpal::Device and its underlying PulseAudio
+// client outlive a single request, but the PA reactor inside the
+// `pulseaudio` crate can die (e.g. on laptop suspend/resume, or
+// pipewire-pulse restart), leaving the cached Device permanently broken.
+// To recover, the device/config/sample_format trio lives behind a Mutex
+// (CpalBackend::state) and is rebuilt in-place via build_device_state when
+// build_output_stream returns a "disconnected"-shaped error. Rebuild
+// attempts share the request's --retry-timeout window on the same 1s
+// cadence as the busy-device retry. The original CpalConfig is retained
+// so rebuild can re-run host/device selection identically.
 
 use crate::error::SpeakerError;
 use crate::mml::{self, Event};
@@ -80,6 +91,7 @@ const PIEZO_LP_HZ: f32 = 6000.0;
 const PIEZO_LP_Q: f32 = 0.707;
 const PIEZO_DRIVE: f32 = 2.0;
 
+#[derive(Clone)]
 pub struct CpalConfig {
     pub host: Option<String>,
     pub device: Option<String>,
@@ -88,15 +100,27 @@ pub struct CpalConfig {
     pub waveform: Waveform,
 }
 
-pub struct CpalBackend {
+// Trio of state replaced together when the PA client dies and we need to
+// reconnect. Held behind CpalBackend::state so a request can swap it
+// in-place without rebuilding the rest of the backend.
+struct DeviceState {
     device: cpal::Device,
     config: StreamConfig,
     sample_format: SampleFormat,
-    volume: f32,
-    waveform: Waveform,
+}
+
+pub struct CpalBackend {
     // Held by the spawn_blocking task that owns the live cpal::Stream, not by
     // the async parent. See module-level comment on cancellation safety.
     play_lock: Mutex<()>,
+    // Rebuilt in-place by rebuild_device on PA-disconnect-shaped errors.
+    // Uncontended in practice: play_lock already serializes plays, and
+    // rebuild_device only runs from inside the same play_lock-guarded
+    // section that the prior failed play_buffer ran in.
+    state: Mutex<DeviceState>,
+    // Retained so rebuild_device can re-run host/device selection with the
+    // same user-supplied config. Immutable for the lifetime of the backend.
+    cfg: CpalConfig,
 }
 
 // Sets the inner abort flag on drop. Installed in the async parent so that
@@ -112,85 +136,26 @@ impl Drop for AbortOnDrop {
 
 impl CpalBackend {
     pub fn new(cfg: &CpalConfig) -> Result<Self, SpeakerError> {
-        let host = match &cfg.host {
-            Some(name) => {
-                let id = cpal::available_hosts()
-                    .into_iter()
-                    .find(|h| h.name().eq_ignore_ascii_case(name))
-                    .ok_or_else(|| {
-                        SpeakerError::CpalError(format!("unknown cpal host: {}", name))
-                    })?;
-                cpal::host_from_id(id)
-                    .map_err(|e| SpeakerError::CpalError(format!("host_from_id: {}", e)))?
-            }
-            None => cpal::default_host(),
-        };
-
-        let device = match &cfg.device {
-            Some(name) => {
-                let mut found: Option<cpal::Device> = None;
-                let devs = host
-                    .output_devices()
-                    .map_err(|e| SpeakerError::CpalError(format!("output_devices: {}", e)))?;
-                for d in devs {
-                    if let Ok(desc) = d.description() {
-                        if desc.name() == name.as_str() {
-                            found = Some(d);
-                            break;
-                        }
-                    }
-                }
-                found.ok_or_else(|| {
-                    SpeakerError::CpalError(format!("output device not found: {}", name))
-                })?
-            }
-            None => host
-                .default_output_device()
-                .ok_or_else(|| SpeakerError::CpalError("no default output device".into()))?,
-        };
-
-        let default_cfg = device
-            .default_output_config()
-            .map_err(|e| SpeakerError::CpalError(format!("default_output_config: {}", e)))?;
-        let sample_format = default_cfg.sample_format();
-        let mut stream_cfg: StreamConfig = default_cfg.into();
-        if let Some(sr) = cfg.sample_rate {
-            stream_cfg.sample_rate = sr;
-        }
-
-        // Pin the callback period to ~10 ms (target buffer ~20 ms) instead of
-        // the backend default. Required for the cpal pulseaudio host on
-        // pipewire-pulse: with BufferSize::Default the cpal backend sends an
-        // all-u32::MAX BufferAttr ("server pick"), and pipewire-pulse picks a
-        // ~2-second initial pre-buffer. The very first data_callback then
-        // receives the entire 2 s buffer at once, exhausts a finite melody on
-        // the first call, and run_stream proceeds to drop the stream long
-        // before the audio has actually played out — pipewire-pulse discards
-        // the rest. An explicit small Fixed buffer makes pipewire-pulse honor
-        // tlength and deliver Requests in real-time chunks, restoring the
-        // periodic-callback pattern other cpal backends already follow. Tracked
-        // upstream as RustAudio/cpal#1190; revisit once that lands.
-        stream_cfg.buffer_size = BufferSize::Fixed(stream_cfg.sample_rate / 100);
-
-        info!(
-            "CPAL backend: device={:?}, sample_rate={}, channels={}, format={:?}, buffer_size={:?}, waveform={:?}, volume={}",
-            device.description().map(|d| d.name().to_owned()).unwrap_or_else(|_| "<unknown>".into()),
-            stream_cfg.sample_rate,
-            stream_cfg.channels,
-            sample_format,
-            stream_cfg.buffer_size,
-            cfg.waveform,
-            cfg.volume,
-        );
-
+        let state = build_device_state(cfg)?;
+        log_device_state(&state, cfg);
         Ok(Self {
-            device,
-            config: stream_cfg,
-            sample_format,
-            volume: cfg.volume,
-            waveform: cfg.waveform,
             play_lock: Mutex::new(()),
+            state: Mutex::new(state),
+            cfg: cfg.clone(),
         })
+    }
+
+    // Replace the cached DeviceState with a freshly-constructed one. Called
+    // from acquire_and_play after build_output_stream returns a
+    // disconnect-shaped error. Each call goes through cpal::default_host()
+    // / host_from_id, both of which construct a new Host (and therefore a
+    // new pulseaudio::Client), so a stale PA reactor is replaced rather
+    // than reused.
+    fn rebuild_device(&self) -> Result<(), SpeakerError> {
+        let new_state = build_device_state(&self.cfg)?;
+        log_device_state(&new_state, &self.cfg);
+        *self.state.lock().unwrap() = new_state;
+        Ok(())
     }
 
     pub async fn play_melody(
@@ -208,9 +173,12 @@ impl CpalBackend {
 
         // Synthesis is pure CPU work — render in the async parent. (Even a
         // 1 MiB melody is well under a millisecond at typical sample rates.)
+        // The buffer is rendered at the *current* device sample rate; if a
+        // mid-request rebuild brings up a different rate (rare — same sink,
+        // fresh PA client), acquire_and_play re-renders.
         let events = mml::render(melody);
-        let sr = self.config.sample_rate;
-        let buffer = synth(&events, sr, self.waveform, self.volume);
+        let initial_sr = self.state.lock().unwrap().config.sample_rate;
+        let buffer = synth(&events, initial_sr, self.cfg.waveform, self.cfg.volume);
 
         if buffer.is_empty() {
             return Ok(0);
@@ -231,7 +199,7 @@ impl CpalBackend {
         let backend = Arc::clone(self);
         let task_abort = Arc::clone(&abort);
         let join = tokio::task::spawn_blocking(move || {
-            backend.acquire_and_play(buffer, retry_timeout, task_abort)
+            backend.acquire_and_play(events, buffer, initial_sr, retry_timeout, task_abort)
         });
 
         match join.await {
@@ -242,9 +210,17 @@ impl CpalBackend {
 
     // Synchronous: acquire play_lock with retry-poll, then play. Runs on a
     // tokio blocking thread. Holds the lock for the entire audio duration.
+    //
+    // After the lock is acquired, the play attempt itself is retried on
+    // disconnect-shaped CPAL errors: rebuild_device replaces the cached
+    // PulseAudio client (which can die on suspend/resume or pipewire-pulse
+    // restart) and we try again on the same 1s cadence. The total wait —
+    // lock-acquire + reconnect retries — is bounded by --retry-timeout.
     fn acquire_and_play(
         &self,
-        buffer: Vec<f32>,
+        events: Vec<Event>,
+        initial_buffer: Vec<f32>,
+        initial_sr: u32,
         retry_timeout: Duration,
         abort: Arc<AtomicBool>,
     ) -> Result<u32, SpeakerError> {
@@ -268,21 +244,67 @@ impl CpalBackend {
             }
         };
 
-        // Lock held — play the audio. Returns when the audio finishes or
-        // when `abort` is set.
-        self.play_buffer(buffer, abort)?;
-        Ok(retries)
+        // Lock held — play, retrying once-per-second on disconnect-shaped
+        // errors after rebuilding the cpal Device. Other errors fail fast.
+        let mut buffer = initial_buffer;
+        let mut buffer_sr = initial_sr;
+        loop {
+            if abort.load(Ordering::SeqCst) {
+                return Ok(retries);
+            }
+            match self.play_buffer(&buffer, Arc::clone(&abort)) {
+                Ok(()) => return Ok(retries),
+                Err(SpeakerError::CpalError(msg)) if is_disconnect_error(&msg) => {
+                    if start.elapsed() >= retry_timeout {
+                        return Err(SpeakerError::CpalError(msg));
+                    }
+                    warn!("CPAL backend disconnected ({}); rebuilding device", msg);
+                    match self.rebuild_device() {
+                        Ok(()) => {
+                            info!("CPAL backend rebuilt after disconnect");
+                            // If the new device exposes a different sample
+                            // rate, re-render at the new rate so pitch is
+                            // preserved. Same-sink reconnects normally
+                            // keep the rate, so this is a rare path.
+                            let new_sr = self.state.lock().unwrap().config.sample_rate;
+                            if new_sr != buffer_sr {
+                                warn!(
+                                    "CPAL sample rate changed across rebuild ({} -> {}); re-rendering",
+                                    buffer_sr, new_sr
+                                );
+                                buffer = synth(
+                                    &events,
+                                    new_sr,
+                                    self.cfg.waveform,
+                                    self.cfg.volume,
+                                );
+                                buffer_sr = new_sr;
+                            }
+                        }
+                        Err(e) => warn!("CPAL device rebuild failed: {}; will retry", e),
+                    }
+                    retries += 1;
+                    std::thread::sleep(RETRY_INTERVAL);
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
-    fn play_buffer(&self, buffer: Vec<f32>, abort: Arc<AtomicBool>) -> Result<(), SpeakerError> {
-        match self.sample_format {
-            SampleFormat::F32 => self.run_stream::<f32>(buffer, abort),
-            SampleFormat::F64 => self.run_stream::<f64>(buffer, abort),
-            SampleFormat::I16 => self.run_stream::<i16>(buffer, abort),
-            SampleFormat::I32 => self.run_stream::<i32>(buffer, abort),
-            SampleFormat::U16 => self.run_stream::<u16>(buffer, abort),
-            SampleFormat::I8 => self.run_stream::<i8>(buffer, abort),
-            SampleFormat::U8 => self.run_stream::<u8>(buffer, abort),
+    fn play_buffer(
+        &self,
+        buffer: &[f32],
+        abort: Arc<AtomicBool>,
+    ) -> Result<(), SpeakerError> {
+        let state = self.state.lock().unwrap();
+        match state.sample_format {
+            SampleFormat::F32 => self.run_stream::<f32>(&state, buffer, abort),
+            SampleFormat::F64 => self.run_stream::<f64>(&state, buffer, abort),
+            SampleFormat::I16 => self.run_stream::<i16>(&state, buffer, abort),
+            SampleFormat::I32 => self.run_stream::<i32>(&state, buffer, abort),
+            SampleFormat::U16 => self.run_stream::<u16>(&state, buffer, abort),
+            SampleFormat::I8 => self.run_stream::<i8>(&state, buffer, abort),
+            SampleFormat::U8 => self.run_stream::<u8>(&state, buffer, abort),
             other => Err(SpeakerError::CpalError(format!(
                 "unsupported sample format: {:?}",
                 other
@@ -292,28 +314,29 @@ impl CpalBackend {
 
     fn run_stream<T>(
         &self,
-        buffer: Vec<f32>,
+        state: &DeviceState,
+        buffer: &[f32],
         abort: Arc<AtomicBool>,
     ) -> Result<(), SpeakerError>
     where
         T: SizedSample + FromSample<f32> + Send + 'static,
     {
-        let channels = self.config.channels as usize;
+        let channels = state.config.channels as usize;
         let total = buffer.len();
         let cursor = Arc::new(Mutex::new(0usize));
         let done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let err_done = Arc::clone(&done);
 
-        let buf = Arc::new(buffer);
+        let buf: Arc<Vec<f32>> = Arc::new(buffer.to_vec());
         let cb_buf = Arc::clone(&buf);
         let cb_cursor = Arc::clone(&cursor);
         let cb_done = Arc::clone(&done);
         let cb_abort = Arc::clone(&abort);
 
-        let stream = self
+        let stream = state
             .device
             .build_output_stream(
-                self.config,
+                state.config,
                 move |out: &mut [T], _info: &cpal::OutputCallbackInfo| {
                     // If the parent future was dropped, write zeros for the
                     // remainder of this callback and signal end-of-buffer.
@@ -376,6 +399,110 @@ impl CpalBackend {
         drop(stream);
         Ok(())
     }
+}
+
+// Construct a fresh DeviceState by re-running host/device selection. Called
+// once at startup from CpalBackend::new and again from rebuild_device when
+// a PA-disconnect error is observed. Each call goes through
+// cpal::default_host() / cpal::host_from_id, both of which build a new Host
+// (and therefore a new pulseaudio::Client), so a stale PA reactor is
+// replaced rather than reused.
+fn build_device_state(cfg: &CpalConfig) -> Result<DeviceState, SpeakerError> {
+    let host = match &cfg.host {
+        Some(name) => {
+            let id = cpal::available_hosts()
+                .into_iter()
+                .find(|h| h.name().eq_ignore_ascii_case(name))
+                .ok_or_else(|| {
+                    SpeakerError::CpalError(format!("unknown cpal host: {}", name))
+                })?;
+            cpal::host_from_id(id)
+                .map_err(|e| SpeakerError::CpalError(format!("host_from_id: {}", e)))?
+        }
+        None => cpal::default_host(),
+    };
+
+    let device = match &cfg.device {
+        Some(name) => {
+            let mut found: Option<cpal::Device> = None;
+            let devs = host
+                .output_devices()
+                .map_err(|e| SpeakerError::CpalError(format!("output_devices: {}", e)))?;
+            for d in devs {
+                if let Ok(desc) = d.description() {
+                    if desc.name() == name.as_str() {
+                        found = Some(d);
+                        break;
+                    }
+                }
+            }
+            found.ok_or_else(|| {
+                SpeakerError::CpalError(format!("output device not found: {}", name))
+            })?
+        }
+        None => host
+            .default_output_device()
+            .ok_or_else(|| SpeakerError::CpalError("no default output device".into()))?,
+    };
+
+    let default_cfg = device
+        .default_output_config()
+        .map_err(|e| SpeakerError::CpalError(format!("default_output_config: {}", e)))?;
+    let sample_format = default_cfg.sample_format();
+    let mut stream_cfg: StreamConfig = default_cfg.into();
+    if let Some(sr) = cfg.sample_rate {
+        stream_cfg.sample_rate = sr;
+    }
+
+    // Pin the callback period to ~10 ms (target buffer ~20 ms) instead of
+    // the backend default. Required for the cpal pulseaudio host on
+    // pipewire-pulse: with BufferSize::Default the cpal backend sends an
+    // all-u32::MAX BufferAttr ("server pick"), and pipewire-pulse picks a
+    // ~2-second initial pre-buffer. The very first data_callback then
+    // receives the entire 2 s buffer at once, exhausts a finite melody on
+    // the first call, and run_stream proceeds to drop the stream long
+    // before the audio has actually played out — pipewire-pulse discards
+    // the rest. An explicit small Fixed buffer makes pipewire-pulse honor
+    // tlength and deliver Requests in real-time chunks, restoring the
+    // periodic-callback pattern other cpal backends already follow. Tracked
+    // upstream as RustAudio/cpal#1190; revisit once that lands.
+    stream_cfg.buffer_size = BufferSize::Fixed(stream_cfg.sample_rate / 100);
+
+    Ok(DeviceState {
+        device,
+        config: stream_cfg,
+        sample_format,
+    })
+}
+
+fn log_device_state(state: &DeviceState, cfg: &CpalConfig) {
+    info!(
+        "CPAL backend: device={:?}, sample_rate={}, channels={}, format={:?}, buffer_size={:?}, waveform={:?}, volume={}",
+        state
+            .device
+            .description()
+            .map(|d| d.name().to_owned())
+            .unwrap_or_else(|_| "<unknown>".into()),
+        state.config.sample_rate,
+        state.config.channels,
+        state.sample_format,
+        state.config.buffer_size,
+        cfg.waveform,
+        cfg.volume,
+    );
+}
+
+// Heuristic: does an error message from build_output_stream / stream.play()
+// indicate the cached PulseAudio client has died and should be rebuilt?
+//
+// The cpal pulseaudio backend surfaces PA reactor death as a backend-
+// specific error whose Display contains "PulseAudio client disconnected".
+// Match case-insensitively on "disconnect" so both that string and any
+// future close-relatives ("client disconnect", "disconnected") trigger the
+// rebuild path. Other CPAL errors (invalid config, unsupported format)
+// remain fatal, preserving the existing fail-fast behavior.
+fn is_disconnect_error(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("disconnect")
 }
 
 fn validate_melody(melody: &str, max_melody_length: usize) -> Result<(), SpeakerError> {
