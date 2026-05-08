@@ -679,7 +679,7 @@ fn synth_generic(events: &[Event], sr: u32, wf: Waveform, volume: f32) -> Vec<f3
         match *ev {
             Event::Rest { centisecs } => {
                 let n = (centisecs as u64 * sr as u64 / 100) as usize;
-                out.extend(std::iter::repeat(0.0).take(n));
+                out.extend(std::iter::repeat_n(0.0, n));
                 phase = 0.0;
             }
             Event::Tone { freq_hz, centisecs } => {

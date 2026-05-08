@@ -278,26 +278,24 @@ pub fn render(melody: &str) -> Vec<Event> {
             }
             b'T' => {
                 let v = getnum(bytes, &mut i);
-                let tempo = if v < MIN_TEMPO || v > MAX_TEMPO {
+                let tempo = if !(MIN_TEMPO..=MAX_TEMPO).contains(&v) {
                     DFLT_TEMPO
                 } else {
                     v
                 };
                 st.whole = (100 * SECS_PER_MIN * WHOLE_NOTE) / tempo;
             }
-            b'M' => {
-                if i + 1 < bytes.len() {
-                    let n = up(bytes[i + 1]);
-                    if n == b'N' {
-                        st.fill = NORMAL;
-                        i += 1;
-                    } else if n == b'L' {
-                        st.fill = LEGATO;
-                        i += 1;
-                    } else if n == b'S' {
-                        st.fill = STACCATO;
-                        i += 1;
-                    }
+            b'M' if i + 1 < bytes.len() => {
+                let n = up(bytes[i + 1]);
+                if n == b'N' {
+                    st.fill = NORMAL;
+                    i += 1;
+                } else if n == b'L' {
+                    st.fill = LEGATO;
+                    i += 1;
+                } else if n == b'S' {
+                    st.fill = STACCATO;
+                    i += 1;
                 }
             }
             _ => {}
