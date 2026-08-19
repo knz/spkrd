@@ -16,10 +16,17 @@
 #                            serve IPv4 clients; pair it with "0.0.0.0" as the default does.
 #   --port <port>           Default port for --bind entries that omit one (default: 1111)
 #   --device <path>         Speaker device path (default: /dev/speaker)
+#   --output <mode>         Output backend: auto (default), freebsd-speaker, or cpal
 #   --retry-timeout <secs>  Device retry timeout (default: 30)
+#   --max-melody-length <n> Maximum melody body length in bytes, 1..=1048576
+#                            (default: 1000)
 #   --daemon                Run as daemon (automatically added by rc.d)
 #   --pidfile <path>        PID file path (default: /var/run/spkrd.pid)
-#   --debug/-d              Enable debug logging including client requests
+#   --debug/-D              Enable debug logging including client requests.
+#                            Note the short option is -D; -d is --device.
+#
+# See USAGE.md for the full option list, including the CPAL-only flags
+# available when the server is built with the 'cpal' feature.
 #
 # Examples:
 #   spkrd_flags="--port 3000"
@@ -30,6 +37,7 @@
 #   spkrd_flags="--debug --port 1111"       # Debug logging with custom port
 #   spkrd_flags="--bind 127.0.0.1"          # Listen on localhost only, IPv4
 #   spkrd_flags="--bind [::1]:9000"         # Listen on localhost only, IPv6, custom port
+#   spkrd_flags="--max-melody-length 4096"  # Allow longer melodies
 #
 # Logging:
 #   - Default: Startup messages and errors only (to syslog facility 'daemon')

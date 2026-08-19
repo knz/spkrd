@@ -29,13 +29,25 @@ logic, validation, and one-melody-at-a-time semantics.
 
 - **HTTP API** - Simple PUT endpoint for melody playback
 - **Two backends** - FreeBSD `/dev/speaker` or cross-platform CPAL audio output
+- **Configurable Listen Addresses** - Bind any mix of IPv4 and IPv6 addresses and ports
 - **Device Retry Logic** - Automatically retries when busy (1s intervals, configurable timeout)
-- **Input Validation** - Melody length limits and UTF-8 validation
+- **Input Validation** - Configurable melody length limit and UTF-8 validation
 - **Configurable Device Path** - Use custom device paths for testing or alternative devices
 - **Daemon Support** - Run as background daemon with PID file management
 - **Flexible Logging** - Syslog for daemon mode, stderr for foreground, with debug logging support
 - **Request Logging** - Timestamps, client IPs, and printable melody content (debug mode only)
 - **Example Clients** - Ready-to-use clients in Rust and Go
+
+## Installation
+
+```bash
+git clone <repository-url>
+cd spkrd
+make && make install
+```
+
+For prerequisites, optional audio-backend features, and service setup on
+FreeBSD (rc.d) and Linux (systemd), see **[INSTALL.md](INSTALL.md)**.
 
 ## FreeBSD Speaker Device
 
@@ -54,385 +66,34 @@ The FreeBSD speaker device (`/dev/speaker`) accepts melody strings in a specific
 
 Example: `"t120l4 c d e f g a b o5c"`
 
-## Installation
-
-### Prerequisites
-
-- Rust 1.70+ (for server)
-- Go 1.19+ (for Go client example)
-- FreeBSD with `/dev/speaker` for the `freebsd-speaker` backend; any
-  CPAL-supported host (Linux/ALSA, PipeWire, PulseAudio, JACK,
-  macOS/CoreAudio, Windows/WASAPI, …) for the `cpal` backend
-
-### Building
-
-```bash
-# Clone and build the server with the default features (includes CPAL)
-git clone <repository-url>
-cd spkrd
-  make && make install   # Build and install server
-
-# Build example clients
-cd examples
-  cargo build --release  # Rust client
-  go build client.go     # Go client
-  make && make install   # Install Rust client
-```
-
-### Build features
-
-| Feature | Default | What it adds | System library required |
-|---------|---------|--------------|-------------------------|
-| `cpal` | yes | CPAL audio backend (ALSA on Linux) | — |
-| `jack` | no | JACK host for `--cpal-host JACK` | `libjack` |
-| `pulseaudio` | no | PulseAudio host for `--cpal-host PulseAudio` | `libpulse` |
-| `pipewire` | no | PipeWire host for `--cpal-host PipeWire` | `libpipewire`, `libclang` (bindgen) |
-
-```bash
-# Default build: CPAL backend with ALSA
-cargo build --release
-
-# With JACK and PulseAudio support
-cargo build --release --features jack,pulseaudio
-
-# With all Linux audio backends
-cargo build --release --features jack,pulseaudio,pipewire
-
-# FreeBSD: kernel backend only (removes cpal dependency entirely)
-cargo build --release --no-default-features
-```
-
-The features can be customized in the `Makefile` via the
-variable `FEATURES`.
-
-When the `pipewire` or `pulseaudio` features are enabled, cpal's default
-host selection picks the best available backend automatically at runtime:
-PipeWire (if running) → PulseAudio (if running) → ALSA. JACK is never
-selected automatically; it must be requested explicitly via `--cpal-host JACK`.
-
-When built without the `cpal` feature, `--output=auto` will fail at
-startup if the configured device path does not exist (rather than
-silently falling back to a non-existent CPAL backend).
-
-### System-Wide Installation
-
-For production deployment as a system service on FreeBSD:
-
-```bash
-# Install to system directories (default: /usr/local)
-make install
-
-# Or install to custom location
-make install DSTDIR=/usr/local
-
-# Or install with custom program name
-make install PROGRAM=my-spkrd
-```
-
-This installs:
-- Binary to `/usr/local/bin/spkrd`
-- FreeBSD rc.d script to `/usr/local/etc/rc.d/spkrd`
-
-### Service Configuration
-
-Add the following to `/etc/rc.conf` to enable the service:
-
-```bash
-# Enable the service
-spkrd_enable="YES"
-
-# Configure server options via flags
-spkrd_flags="--port 1111 --device /dev/speaker --retry-timeout 30"
-```
-
-**Available configuration flags:**
-- `--port <port>` - Server port (default: 1111)
-- `--device <path>` - Speaker device path (default: /dev/speaker)
-- `--output <mode>` - Output backend: `auto`, `freebsd-speaker`, or `cpal` (default: auto; `cpal` only available when built with the `cpal` feature)
-- `--retry-timeout <secs>` - Device retry timeout (default: 30)
-- `--daemon` - Run as background daemon (automatically added by rc.d)
-- `--pidfile <path>` - PID file path (default: /var/run/spkrd.pid)
-- `--debug/-d` - Enable debug logging including client request details
-
-**CPAL-only flags (only present when built with the `cpal` feature):**
-- `--waveform <wf>` - `pc-speaker` (default), `square-bandlimited` (sounds nice), `square`, `sine`, `triangle`, or `sawtooth`
-- `--volume <v>` - Output volume in `[0.0, 1.0]` (default: 0.25)
-- `--sample-rate <hz>` - Override the device's default sample rate
-- `--cpal-host <name>` - CPAL host backend; matching is case-insensitive. Valid values:
-  `ALSA` (default on Linux), `PipeWire` (requires `--features pipewire`),
-  `PulseAudio` (requires `--features pulseaudio`), `JACK` (requires `--features jack`),
-  `CoreAudio` (macOS), `WASAPI` (Windows). When omitted, cpal picks the best available
-  host automatically (PipeWire > PulseAudio > ALSA on Linux).
-- `--cpal-device <name>` - Output device name; defaults to the host's default output
-
-The `pc-speaker` waveform is a faithful simulation of a modern
-piezoelectric PC speaker: note frequencies are quantised to what the
-Intel 8254 PIT can actually produce (`1,193,182 Hz / divisor`, integer
-divisor), a square wave at that frequency is processed through a 3-stage
-biquad chain (high-pass / midrange peak / low-pass) tuned to a small
-piezo disc, and the output is soft-clipped via `tanh` to mimic driver
-saturation. The square-wave phase is reset at every note (mirroring the
-PIT counter reset the FreeBSD kernel performs in `timer_spkr_setfreq`),
-so consecutive notes — even at the same pitch — get the mechanical
-"plink" articulation a real piezo produces. Filter state is preserved
-across notes and rests, so the speaker rings out naturally on note-off
-rather than cutting silently.
-
-The `square` waveform is the kernel-faithful raw output: phase is reset
-at every note (matching the PIT counter reset) and no envelope is
-applied, so consecutive notes have hard amplitude-step boundary clicks
-that match what FreeBSD's unfiltered `/dev/speaker` output sounds like
-through a modern DAC. If you want click-suppressed alternatives, the
-remaining software waveforms (`square-bandlimited`, `sine`, `triangle`,
-`sawtooth`) keep phase continuity across notes and apply a 5 ms
-attack/release envelope to fade in/out each note.
-
-**Example configurations:**
-
-```bash
-# Custom port
-spkrd_flags="--port 3000"
-
-# Different device and port
-spkrd_flags="--device /tmp/test-speaker --port 9000"
-
-# Extended timeout
-spkrd_flags="--retry-timeout 60 --port 1111"
-
-# Enable debug logging (shows client requests in logs)
-spkrd_flags="--debug --port 1111"
-
-# Custom PID file location for non-root execution
-spkrd_flags="--pidfile /tmp/spkrd.pid --port 1111"
-```
-
-### Service Management
-
-```bash
-# Start the service
-service spkrd start
-
-# Stop the service
-service spkrd stop
-
-# Restart the service
-service spkrd restart
-
-# Check service status
-service spkrd status
-```
-
-### Logging
-
-SPKRD supports flexible logging with different outputs depending on execution mode:
-
-#### Daemon Mode (--daemon)
-- Uses **syslog** with facility `daemon`
-- Logs go to system log (typically `/var/log/daemon.log` or `/var/log/messages`)
-- View logs: `tail -f /var/log/daemon.log | grep spkrd`
-
-#### Foreground Mode (default)
-- Uses **stderr** with timestamps
-- Logs appear directly in terminal
-- Suitable for development and manual testing
-
-#### Log Levels
-- **Default**: Startup messages (with all configuration) and errors only
-- **Debug** (`--debug/-d`): Adds client request logging including:
-  - Client IP address
-  - Printable characters from melody data
-  - Request status and retry count
-  - Completion status
-
-#### Examples
-
-```bash
-# View daemon logs on FreeBSD
-tail -f /var/log/daemon.log | grep spkrd
-
-# Run with debug logging in foreground
-./spkrd --debug --port 1111
-
-# Service with debug logging (via rc.conf)
-spkrd_flags="--debug"
-service spkrd restart
-```
-
-**Sample log output:**
-```
-# Startup (always logged)
-Jan 29 10:30:15 hostname spkrd[1234]: Starting spkrd server: port=1111, retry_timeout=30s, device=/dev/speaker, daemon=true, pidfile=/var/run/spkrd.pid, debug=false
-
-# Error (always logged)
-Jan 29 10:30:16 hostname spkrd[1234]: Device error for request from 192.168.1.100: Permission denied
-
-# Debug request logging (--debug only)
-Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100: melody=t120l4cdefgab
-Jan 29 10:30:17 hostname spkrd[1234]: Request from 192.168.1.100 completed successfully after 0 retries
-```
-
 ## Usage
 
-### Starting the Server
-
 ```bash
-# Basic usage (default port 1111, device /dev/speaker)
-./target/release/spkrd
+# Start the server (listens on 0.0.0.0:1111 and [::]:1111)
+spkrd
 
-# Custom configuration
-./target/release/spkrd --port 3000 --retry-timeout 60 --device /dev/speaker
-
-# For testing with a regular file
-./target/release/spkrd --device /tmp/test-speaker
-
-# Run as daemon
-./target/release/spkrd --daemon
-
-# Run with debug logging
-./target/release/spkrd --debug
-```
-
-### Command Line Options
-
-- `--port` - Server port (default: 1111)
-- `--retry-timeout` - Device retry timeout in seconds (default: 30)
-- `--device` - Path to speaker device (default: /dev/speaker)
-- `--output` - Output backend: `auto` (default), `freebsd-speaker`, or `cpal` (the `cpal` value is available only when built with the `cpal` feature)
-- `--daemon` - Run as background daemon
-- `--pidfile` - Path to PID file (default: /var/run/spkrd.pid)
-- `--debug/-d` - Enable debug logging including client request details
-
-When built with the `cpal` feature, the following additional flags are
-available (and are otherwise hidden):
-
-- `--waveform`, `--volume`, `--sample-rate`, `--cpal-host`,
-  `--cpal-device` — see the configuration-flags section above for
-  details.
-
-### API Usage
-
-#### Play a Melody
-
-```bash
+# Play a melody
 curl -X PUT http://localhost:1111/play -d "cdefgab"
 ```
 
-#### Response Codes
-
-- **200** - Melody played successfully (empty body)
-- **400** - Invalid melody (error message in body)
-- **503** - Device busy/timeout (error message in body)
-- **500** - Server error (error message in body)
-
-### Example Clients
-
-The `examples/` directory contains ready-to-use client implementations in Rust and Go.
-
-**Quick Examples:**
-```bash
-# Rust client with config file
-cd examples
-echo "http://server:1111" > ~/.spkrc
-./target/release/client "cdefgab"
-
-# Go client
-go run client.go http://server:1111 "cdefgab"
-```
-
-For complete client documentation, build instructions, and usage examples, see **[examples/README.md](examples/README.md)**.
-
-#### Python Example
-
-```python
-import requests
-
-response = requests.put('http://server:1111/play', data='cdefgab')
-if response.status_code == 200:
-    print("Melody played successfully")
-else:
-    print(f"Error: {response.text}")
-```
+For the full command line reference, listen-address syntax, waveforms,
+logging, and troubleshooting, see **[USAGE.md](USAGE.md)**. For the HTTP
+API, see **[API.md](API.md)**.
 
 ## Development
 
-### Running Tests
-
-```bash
-# Run all tests (uses temporary files as mock devices)
-cargo test
-
-# Run with verbose output
-cargo test -- --nocapture
-```
-
-### Project Structure
-
-```
-spkrd/
-├── src/
-│   ├── main.rs          # CLI entry point
-│   ├── lib.rs           # Library interface
-│   ├── server.rs        # HTTP server
-│   ├── speaker.rs       # Device handling
-│   └── error.rs         # Error types
-├── tests/
-│   └── integration_tests.rs  # Integration tests
-├── examples/
-│   ├── client.rs        # Rust client
-│   ├── client.go        # Go client
-│   └── Cargo.toml       # Client dependencies
-├── API.md               # Detailed API documentation
-└── README.md            # This file
-```
+For the project layout, test suite, build configurations, CI, and
+contribution workflow, see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
 
 ## How It Works
 
 1. **HTTP Request** - Client sends PUT request to `/play` with melody data
-2. **Validation** - Server validates melody length (≤1000 chars) and UTF-8 encoding
+2. **Validation** - Server validates melody length (against
+   `--max-melody-length`, default 1000 bytes) and UTF-8 encoding
 3. **Device Access** - Server attempts to open the speaker device
 4. **Retry Logic** - If device is busy (EBUSY), retry every 1 second until timeout
 5. **Playback** - Write melody to device and close
 6. **Response** - Return appropriate HTTP status code
-
-## Troubleshooting
-
-### Permission Denied
-
-If you get permission errors accessing `/dev/speaker`:
-
-```bash
-# Check device permissions
-ls -l /dev/speaker
-
-# Add user to appropriate group (typically 'wheel' or 'operator')
-sudo pw groupmod wheel -m username
-
-# Or run with sudo (not recommended for production)
-sudo ./target/release/spkrd
-```
-
-### Device Busy
-
-The server automatically retries when the device is busy. If you consistently get timeout errors:
-
-- Increase `--retry-timeout` value
-- Check if another process is using the speaker device
-- Verify the device path is correct
-
-### Testing Without Hardware
-
-Use a regular file as a mock device for testing:
-
-```bash
-# Start server with file device
-./target/release/spkrd --device /tmp/test-speaker
-
-# Send melody
-curl -X PUT http://localhost:1111/play -d "cdefgab"
-
-# Check result
-cat /tmp/test-speaker
-```
 
 ## License
 
@@ -442,14 +103,14 @@ Copyright (c) 2025-2026, Raphael Poss
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass with `cargo test`
-5. Submit a pull request
+See [DEVELOPMENT.md](DEVELOPMENT.md#contributing).
 
 ## See Also
 
-- [FreeBSD speaker(4) Manual](https://man.freebsd.org/cgi/man.cgi?query=speaker&apropos=0&sektion=0&manpath=FreeBSD+14.3-RELEASE+and+Ports&arch=default&format=html)
+- [Installation instructions](INSTALL.md)
+- [Usage, logging and troubleshooting](USAGE.md)
+- [Development notes](DEVELOPMENT.md)
 - [API Documentation](API.md)
-- [Project Changelog](changelog/20250829-freebsd-speaker-server.md)
+- [Client examples](examples/README.md)
+- [FreeBSD speaker(4) Manual](https://man.freebsd.org/cgi/man.cgi?query=speaker&apropos=0&sektion=0&manpath=FreeBSD+14.3-RELEASE+and+Ports&arch=default&format=html)
+- [Project changelogs](changelog/)

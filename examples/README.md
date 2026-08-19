@@ -6,26 +6,33 @@ This directory contains example client implementations for the spkrd speaker ser
 
 - `client.rs` - Rust implementation of the spkrd client
 - `client.go` - Go implementation of the spkrd client
-- `Makefile` - Build and installation automation for the Rust client
+- `spkcmd` - Shell wrapper that plays audio feedback for a command's exit status
+- `spkcmd-bash.sh` - Bash shell integration for automatic audio feedback
+- `spkcmd-zsh.sh` - Zsh shell integration for automatic audio feedback
+- `tunes/` - Bundled `.mml` melodies ready to play
+- `Makefile` - Build and installation automation for the Rust client and `spkcmd`
+- `Cargo.toml` - Rust client dependencies
 
 ## Building and Installing
 
-The provided Makefile supports building and installing the Rust client with configurable options.
+The provided Makefile builds the Rust client and installs it alongside the
+`spkcmd` utility. The Go client is not covered by the Makefile; build it
+manually with `go build` (see [Go Client](#go-client) below).
 
 ### Make Targets
 
 - `make all` - Build the Rust client
 - `make clean` - Remove build artifacts
-- `make install` - Build and install the client binary and spkcmd utility
+- `make install` - Build and install the client binary and the `spkcmd` utility
 
 ### Configuration Variables
 
 All variables can be overridden on the command line:
 
-- `BUILD` - Build mode (default: `release`)
+- `PROFILE` - Cargo profile to build (default: `release`)
 
-  - `make BUILD=debug` - Build in debug mode
-  - `make BUILD=release` - Build in release mode (default)
+  - `make PROFILE=dev` - Build in debug mode
+  - `make PROFILE=release` - Build in release mode (default)
 
 - `PROGRAM` - Installed binary name (default: `spkrc`)
 
@@ -41,7 +48,7 @@ All variables can be overridden on the command line:
 make
 
 # Build in debug mode
-make BUILD=debug
+make PROFILE=dev
 
 # Install with default name (spkrc) to /usr/local/bin
 make install
@@ -50,8 +57,13 @@ make install
 make PROGRAM=speaker-client DSTDIR=$HOME/.local/bin install
 
 # Build debug version and install with custom name
-make BUILD=debug PROGRAM=spkrc-debug install
+make PROFILE=dev PROGRAM=spkrc-debug install
 ```
+
+`make install` installs two files into `DSTDIR`: the compiled Rust client
+under the name given by `PROGRAM` (default `spkrc`), and the `spkcmd`
+script. The shell-integration scripts are not installed; source them from
+this directory (see [Shell Integration](#shell-integration)).
 
 ## Requirements
 
@@ -77,6 +89,9 @@ The Rust client supports flexible server configuration via command line options 
 cargo run --bin client -- --server http://server:1111 "t120l8cdefgab"
 ```
 
+The built binary is `target/<profile>/client`; `make install` installs it
+under the name `spkrc`.
+
 #### Config File Usage
 
 ```bash
@@ -100,6 +115,8 @@ echo "http://server:1111" > ~/.spkrc
 3. Error if neither is provided
 
 ### Go Client
+
+The Go client is standalone and is not built by the Makefile.
 
 ```bash
 # Basic usage
@@ -136,10 +153,11 @@ by the FreeBSD `speaker(4)` device).
 | `twinkle-twinkle-little-star.mml`           | Twinkle, Twinkle, Little Star |
 | `bach.mml`                                  | J.S. Bach                     |
 
-NB: `bach.ml` needs a longer melody length limit configured on the
-server. This is supported with the CPAL back-end but cannot be played
-directly on the FreeBSD speaker driver. You can manually split it into
-multiple smaller tunes.
+NB: `bach.mml` is about 3.9 KB and so exceeds the server's default melody
+length limit of 1000 bytes. Raise the limit on the server to play it, for
+example `spkrd --max-melody-length 4096`. This works with the CPAL
+back-end but cannot be played directly on the FreeBSD speaker driver. You
+can also split the file manually into multiple smaller tunes.
 
 ### Playing a bundled tune with `spkrc`
 
@@ -170,8 +188,9 @@ done
 Drop additional `.mml` files into `examples/tunes/` using the same convention.
 Two things to keep in mind:
 
-- The server enforces a **1000-character** limit on the melody string, so
-  trim or split very long pieces.
+- The server enforces a melody length limit, **1000 bytes by default**,
+  configurable with `--max-melody-length` (valid range `1..=1048576`).
+  Trim or split very long pieces, or raise the limit on the server.
 - `super-mario-bros.mml` uses `~` (tie/sustain) characters that come from a
   non-FreeBSD MML dialect; the `speaker(4)` grammar does not define `~`, so
   that particular file may produce unexpected results or an error on a real
@@ -206,7 +225,8 @@ spkcmd ls /nonexistent
 
 ## Shell Integration
 
-For automatic audio feedback on all command line operations, source the provided shell configuration files.
+For automatic audio feedback on all command line operations, source one of
+the provided shell configuration files.
 
 ### Available Configurations
 
@@ -215,14 +235,17 @@ For automatic audio feedback on all command line operations, source the provided
 
 ### Installation
 
-Add one of these lines to your shell configuration file:
+These scripts are **not** installed by `make install`; source them from
+your checkout of this repository, or copy them somewhere convenient
+first. Add one of these lines to your shell configuration file, adjusting
+the path to where the repository lives:
 
 ```bash
 # For bash users - add to ~/.bashrc or ~/.bash_profile
-source /usr/local/share/spkrd/examples/spkcmd-bash.sh
+source /path/to/spkrd/examples/spkcmd-bash.sh
 
 # For zsh users - add to ~/.zshrc
-source /usr/local/share/spkrd/examples/spkcmd-zsh.sh
+source /path/to/spkrd/examples/spkcmd-zsh.sh
 ```
 
 ### Usage
@@ -270,3 +293,10 @@ The zsh integration uses dynamic command wrapping that automatically creates aud
 - **First use delay**: New commands get audio feedback starting from their second use in the session
 
 This approach provides intelligent audio feedback while maintaining performance and avoiding unnecessary wrapper creation for unused commands.
+
+## See Also
+
+- [Server README](../README.md)
+- [Installation instructions](../INSTALL.md)
+- [Server usage and command line reference](../USAGE.md)
+- [HTTP API documentation](../API.md)
