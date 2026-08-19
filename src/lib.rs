@@ -3,8 +3,10 @@
 // compiled; cpal_backend (parses MML via the mml module and synthesises a
 // waveform through the host's audio output) is gated behind the `cpal`
 // Cargo feature, which is enabled by default. server::run dispatches to
-// whichever backend has been selected at startup.
+// whichever backend has been selected at startup, listening on the
+// addresses parsed by the bind module from the --bind flag.
 
+pub mod bind;
 pub mod error;
 pub mod server;
 pub mod freebsd_speaker;

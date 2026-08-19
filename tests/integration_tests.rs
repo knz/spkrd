@@ -1,6 +1,7 @@
 // Integration tests for spkrd server using temporary files as mock devices
 
 use std::fs;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
@@ -14,7 +15,7 @@ async fn test_server_with_file_device() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
+        let _ = spkrd::server::run(vec![SocketAddr::from(([0, 0, 0, 0], port))], Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start
@@ -54,7 +55,7 @@ async fn test_melody_validation() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
+        let _ = spkrd::server::run(vec![SocketAddr::from(([0, 0, 0, 0], port))], Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start
@@ -95,7 +96,7 @@ async fn test_multiple_requests() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
+        let _ = spkrd::server::run(vec![SocketAddr::from(([0, 0, 0, 0], port))], Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start
@@ -142,7 +143,7 @@ async fn test_invalid_utf8() {
     let port = find_available_port().await;
     let server_handle = tokio::spawn(async move {
         let backend = spkrd::server::Backend::FreebsdSpeaker { device_path };
-        let _ = spkrd::server::run(port, Duration::from_secs(30), backend, 1000, false).await;
+        let _ = spkrd::server::run(vec![SocketAddr::from(([0, 0, 0, 0], port))], Duration::from_secs(30), backend, 1000, false).await;
     });
 
     // Wait a moment for the server to start

@@ -73,11 +73,17 @@ Example: `"t120l4 c d e f g a b o5c"`
 ## Server Configuration
 
 ```bash
-spkrd --port 1111 --retry-timeout 30 --device /dev/speaker --max-melody-length 1000
+spkrd --bind 0.0.0.0,[::] --port 1111 --retry-timeout 30 --device /dev/speaker --max-melody-length 1000
 ```
 
 Options:
-- `--port`: Server port (default: 1111)
+- `--bind`: Comma-separated list of listen addresses (default:
+  `0.0.0.0,[::]`). Each entry is either a bare IPv4 literal, optionally
+  suffixed `:port` (e.g. `0.0.0.0`, `127.0.0.1:9000`), or a bracketed IPv6
+  literal, optionally suffixed `:port` (e.g. `[::]`, `[::1]:9000`).
+  Brackets are only valid around an IPv6 address. An entry without `:port`
+  uses `--port`. The server binds and listens on every address in the list.
+- `--port`: Default port for `--bind` entries that omit one (default: 1111)
 - `--retry-timeout`: Device retry timeout in seconds (default: 30)
 - `--device`: Path to speaker device (default: /dev/speaker)
 - `--max-melody-length`: Maximum body length in bytes; must be in

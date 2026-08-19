@@ -7,7 +7,8 @@
 // fallback when available. Without the `cpal` feature, `auto` falls through
 // to freebsd-speaker and fails at startup if the device path is missing.
 // Backend-specific flags from the unselected backend are warned about, not
-// rejected.
+// rejected. The --bind flag (parsed by the bind module) lists the listen
+// addresses; --port supplies the default port for entries that omit one.
 
 use clap::{Parser, ValueEnum};
 use daemonize::Daemonize;
@@ -22,6 +23,7 @@ use syslog::{BasicLogger, Facility, Formatter3164};
 
 #[cfg(feature = "cpal")]
 use spkrd::cpal_backend::{CpalBackend, CpalConfig, Waveform};
+use spkrd::bind;
 use spkrd::server::{self, Backend};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -67,8 +69,18 @@ const OUTPUT_HELP: &str =
 #[derive(Parser)]
 #[command(author, version, about = "FreeBSD speaker device network server", long_about = None)]
 struct Args {
-    #[arg(short, long, default_value = "1111")]
+    #[arg(short, long, default_value = "1111", help = "Default port for --bind entries that omit one")]
     port: u16,
+
+    #[arg(
+        long,
+        default_value = "0.0.0.0,[::]",
+        help = "Comma-separated list of listen addresses. Each entry is a bare IPv4 literal \
+                (e.g. 0.0.0.0 or 127.0.0.1:9000) or a bracketed IPv6 literal (e.g. [::] or \
+                [::1]:9000); brackets are only valid around IPv6. An entry without ':port' \
+                uses --port."
+    )]
+    bind: String,
 
     #[arg(short, long, default_value = "30", help = "Retry timeout in seconds")]
     retry_timeout: u64,
@@ -278,6 +290,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
+    let bind_addrs = match bind::parse_bind_spec(&args.bind, args.port) {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            eprintln!("spkrd: invalid --bind: {}", e);
+            process::exit(1);
+        }
+    };
+
     init_logging(args.daemon, args.debug);
 
     // Track whether user explicitly chose --output (vs Auto default) for the
@@ -305,8 +325,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolved = resolve_output(args.output, &args.device);
 
     info!(
-        "Starting spkrd: port={}, retry_timeout={}s, max_melody_length={}, output={:?} (resolved={:?}), device={}, daemon={}, pidfile={}, debug={}",
-        args.port,
+        "Starting spkrd: bind={:?}, retry_timeout={}s, max_melody_length={}, output={:?} (resolved={:?}), device={}, daemon={}, pidfile={}, debug={}",
+        bind_addrs,
         args.retry_timeout,
         args.max_melody_length,
         args.output,
@@ -341,7 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     runtime.block_on(async move {
         match server::run(
-            args.port,
+            bind_addrs,
             retry_timeout,
             backend,
             args.max_melody_length,

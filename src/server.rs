@@ -3,7 +3,10 @@
 // CPAL audio renderer) and dispatches /play requests accordingly. The melody
 // length limit is configured at startup and threaded through to whichever
 // backend validates the incoming body. Error mapping to HTTP status codes is
-// shared between the available backends.
+// shared between the available backends. run() binds one listener per
+// address in the caller-supplied list (see the bind module for how that
+// list is parsed from --bind) and serves the same app on all of them
+// concurrently.
 
 #[cfg(feature = "cpal")]
 use crate::cpal_backend::CpalBackend;
@@ -40,7 +43,7 @@ struct AppState {
 }
 
 pub async fn run(
-    port: u16,
+    addrs: Vec<SocketAddr>,
     retry_timeout: Duration,
     backend: Backend,
     max_melody_length: usize,
@@ -57,15 +60,24 @@ pub async fn run(
         .route("/play", put(play_handler))
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = TcpListener::bind(addr).await?;
+    let mut listeners = Vec::with_capacity(addrs.len());
+    for addr in &addrs {
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|e| format!("failed to bind {}: {}", addr, e))?;
+        info!("Server listening on {}", addr);
+        listeners.push(listener);
+    }
 
-    info!("Server listening on {}", addr);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    let mut tasks = tokio::task::JoinSet::new();
+    for listener in listeners {
+        let make_service = app.clone().into_make_service_with_connect_info::<SocketAddr>();
+        tasks.spawn(async move { axum::serve(listener, make_service).await });
+    }
+
+    while let Some(result) = tasks.join_next().await {
+        result??;
+    }
 
     Ok(())
 }

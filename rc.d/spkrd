@@ -8,7 +8,11 @@
 # spkrd_flags="--port 1111 --device /dev/speaker --retry-timeout 30"
 #
 # Available flags:
-#   --port <port>           Server port (default: 1111)
+#   --bind <spec>           Comma-separated listen addresses (default: 0.0.0.0,[::]).
+#                            Entries are a bare IPv4 literal (optionally ":port") or a
+#                            bracketed IPv6 literal (optionally ":port"); brackets are
+#                            only valid around IPv6. An entry without ":port" uses --port.
+#   --port <port>           Default port for --bind entries that omit one (default: 1111)
 #   --device <path>         Speaker device path (default: /dev/speaker)
 #   --retry-timeout <secs>  Device retry timeout (default: 30)
 #   --daemon                Run as daemon (automatically added by rc.d)
@@ -22,6 +26,8 @@
 #   spkrd_flags="--pidfile /var/run/spkrd-alt.pid --port 1111"
 #   spkrd_flags="--debug"                    # Enable debug logging
 #   spkrd_flags="--debug --port 1111"       # Debug logging with custom port
+#   spkrd_flags="--bind 127.0.0.1"          # Listen on localhost only, IPv4
+#   spkrd_flags="--bind [::1]:9000"         # Listen on localhost only, IPv6, custom port
 #
 # Logging:
 #   - Default: Startup messages and errors only (to syslog facility 'daemon')
