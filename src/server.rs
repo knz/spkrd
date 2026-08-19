@@ -7,6 +7,19 @@
 // address in the caller-supplied list (see the bind module for how that
 // list is parsed from --bind) and serves the same app on all of them
 // concurrently.
+//
+// IPv6 listeners are bound v6-only (bind_listener sets IPV6_V6ONLY). The
+// default --bind spec is "0.0.0.0,[::]", which only works if the two
+// wildcard sockets are independent. That is the native behaviour on
+// FreeBSD, where net.inet6.ip6.v6only defaults to 1, but not on Linux,
+// where net.ipv6.bindv6only defaults to 0 and makes a [::] socket
+// dual-stack: it accepts IPv4 too, so it overlaps an already-bound
+// 0.0.0.0 socket on the same port and the second bind fails with
+// EADDRINUSE. Setting the option explicitly makes the documented default
+// mean the same thing everywhere — two separate listeners, one per
+// family — instead of depending on a host sysctl. The consequence is
+// that binding only "[::]" is genuinely IPv6-only and will not serve
+// IPv4 clients; list "0.0.0.0" as well to serve both.
 
 #[cfg(feature = "cpal")]
 use crate::cpal_backend::CpalBackend;
@@ -21,6 +34,7 @@ use axum::{
     Router,
 };
 use log::{debug, error, info};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::net::SocketAddr;
 #[cfg(feature = "cpal")]
 use std::sync::Arc;
@@ -62,9 +76,7 @@ pub async fn run(
 
     let mut listeners = Vec::with_capacity(addrs.len());
     for addr in &addrs {
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| format!("failed to bind {}: {}", addr, e))?;
+        let listener = bind_listener(*addr).map_err(|e| format!("failed to bind {}: {}", addr, e))?;
         info!("Server listening on {}", addr);
         listeners.push(listener);
     }
@@ -80,6 +92,38 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+// Bind a single listener. IPv6 addresses get IPV6_V6ONLY so that the
+// wildcard IPv4 and IPv6 entries of the default --bind spec are separate
+// sockets rather than overlapping ones; see the module comment.
+//
+// Built through socket2 because tokio's TcpListener::bind offers no way to
+// set socket options before the bind() call, and IPV6_V6ONLY must be set
+// while the socket is still unbound.
+fn bind_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    let domain = match addr {
+        SocketAddr::V4(_) => Domain::IPV4,
+        SocketAddr::V6(_) => Domain::IPV6,
+    };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+
+    // std::net::TcpListener::bind sets SO_REUSEADDR on Unix and socket2
+    // does not; without it a restart fails for as long as the previous
+    // listener lingers in TIME_WAIT.
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+
+    if matches!(addr, SocketAddr::V6(_)) {
+        socket.set_only_v6(true)?;
+    }
+
+    socket.bind(&addr.into())?;
+    // Same backlog std::net::TcpListener::bind uses.
+    socket.listen(128)?;
+    socket.set_nonblocking(true)?;
+
+    TcpListener::from_std(std::net::TcpListener::from(socket))
 }
 
 async fn play_handler(

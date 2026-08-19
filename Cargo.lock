@@ -2090,6 +2090,7 @@ dependencies = [
  "env_logger",
  "log",
  "reqwest",
+ "socket2",
  "syslog",
  "tempfile",
  "tokio",

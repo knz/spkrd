@@ -83,6 +83,13 @@ Options:
   literal, optionally suffixed `:port` (e.g. `[::]`, `[::1]:9000`).
   Brackets are only valid around an IPv6 address. An entry without `:port`
   uses `--port`. The server binds and listens on every address in the list.
+
+  IPv6 entries are bound v6-only (`IPV6_V6ONLY`), so `[::]` serves IPv6
+  clients only and does not also accept IPv4 — list `0.0.0.0` alongside it
+  to serve both, as the default does. Without this the two wildcard
+  entries of the default would overlap on hosts where a `[::]` socket is
+  dual-stack (Linux with `net.ipv6.bindv6only=0`) and the second bind
+  would fail with `EADDRINUSE`.
 - `--port`: Default port for `--bind` entries that omit one (default: 1111)
 - `--retry-timeout`: Device retry timeout in seconds (default: 30)
 - `--device`: Path to speaker device (default: /dev/speaker)

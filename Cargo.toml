@@ -18,6 +18,9 @@ daemonize = "0.5"
 log = "0.4"
 env_logger = "0.11"
 syslog = "7.0"
+# Needed to set IPV6_V6ONLY before bind(); tokio's TcpListener::bind
+# exposes no hook for socket options. See src/server.rs.
+socket2 = { version = "0.6", features = ["all"] }
 # 0.18.2 is the first crates.io release carrying the PulseAudio
 # Stream::drop fixes (RustAudio/cpal#1189) that spkrd previously
 # consumed from a fork via [patch.crates-io].

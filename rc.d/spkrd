@@ -12,6 +12,8 @@
 #                            Entries are a bare IPv4 literal (optionally ":port") or a
 #                            bracketed IPv6 literal (optionally ":port"); brackets are
 #                            only valid around IPv6. An entry without ":port" uses --port.
+#                            IPv6 entries are bound v6-only, so "[::]" alone does not
+#                            serve IPv4 clients; pair it with "0.0.0.0" as the default does.
 #   --port <port>           Default port for --bind entries that omit one (default: 1111)
 #   --device <path>         Speaker device path (default: /dev/speaker)
 #   --retry-timeout <secs>  Device retry timeout (default: 30)
