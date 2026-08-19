@@ -530,8 +530,13 @@ fn build_device_state(cfg: &CpalConfig) -> Result<DeviceState, SpeakerError> {
     // before the audio has actually played out — pipewire-pulse discards
     // the rest. An explicit small Fixed buffer makes pipewire-pulse honor
     // tlength and deliver Requests in real-time chunks, restoring the
-    // periodic-callback pattern other cpal backends already follow. Tracked
-    // upstream as RustAudio/cpal#1190; revisit once that lands.
+    // periodic-callback pattern other cpal backends already follow.
+    //
+    // Tracked upstream as RustAudio/cpal#1190, closed by #1258, which adds
+    // the draining `StreamTrait::stop(timeout)`. That API is 0.19.0-only
+    // and 0.19.0 is unreleased, so on 0.18.x this workaround (and the
+    // matching flush sleep in run_stream) is still required. Revisit both
+    // together once 0.19 ships.
     stream_cfg.buffer_size = BufferSize::Fixed(stream_cfg.sample_rate / 100);
 
     Ok(DeviceState {

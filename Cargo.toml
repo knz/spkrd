@@ -18,7 +18,10 @@ daemonize = "0.5"
 log = "0.4"
 env_logger = "0.11"
 syslog = "7.0"
-cpal = { version = ">=0.17", optional = true }
+# 0.18.2 is the first crates.io release carrying the PulseAudio
+# Stream::drop fixes (RustAudio/cpal#1189) that spkrd previously
+# consumed from a fork via [patch.crates-io].
+cpal = { version = "0.18.2", optional = true }
 
 [features]
 default = ["cpal"]
@@ -35,13 +38,6 @@ pulseaudio = ["cpal", "cpal/pulseaudio"]
 # Selected automatically by cpal's default host when available (highest priority).
 # Can also be forced with --cpal-host PipeWire.
 pipewire = ["cpal", "cpal/pipewire"]
-
-# cpal 0.18 adds PipeWire and PulseAudio backends (not yet published to
-# crates.io). Pinned to a fork carrying the PulseAudio stream-leak fix
-# (RustAudio/cpal#1188); revert to upstream once that PR merges and
-# upstream cpal >=0.18 is released.
-[patch.crates-io]
-cpal = { git = "https://github.com/knz/cpal", branch = "fix/pulseaudio-stream-leak-1188" }
 
 [dev-dependencies]
 reqwest = "0.12"
