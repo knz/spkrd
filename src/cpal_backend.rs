@@ -29,10 +29,13 @@
 // callback can fire for both fatal and non-fatal conditions. We
 // classify by ErrorKind into three buckets:
 //
-//   * Continues — RealtimeDenied, Xrun, DeviceChanged. cpal docs
+//   * Continues — RealtimeDenied, DeviceChanged. cpal docs
 //     explicitly state playback continues. We log and ignore: the
 //     data callback keeps filling the buffer and signals end-of-
-//     stream naturally on exhaustion.
+//     stream naturally on exhaustion. (Buffer over/underruns used to
+//     belong here as ErrorKind::Xrun; cpal 0.19 removed that variant
+//     and reports xruns via CallbackInfo::xrun() on the data callback
+//     instead. spkrd does not act on them, so it does not read it.)
 //
 //   * Disconnect — StreamInvalidated, DeviceNotAvailable,
 //     HostUnavailable. The PA host maps Disconnected/Io errors to
@@ -53,7 +56,7 @@
 use crate::error::SpeakerError;
 use crate::mml::{self, Event};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, ErrorKind, FromSample, SampleFormat, SizedSample, StreamConfig};
+use cpal::{ErrorKind, FromSample, SampleFormat, SizedSample, StreamConfig};
 use log::{debug, info, warn};
 use std::f32::consts::PI;
 use std::net::SocketAddr;
@@ -62,6 +65,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const RETRY_INTERVAL: Duration = Duration::from_secs(1);
+
+// Upper bound on how long run_stream waits in StreamTrait::stop for the
+// device to play out frames the data callback has already written. Only a
+// backend that has stopped consuming should ever reach it, so it is sized
+// as a backstop, not as a normal-path budget: with BufferSize::Default a
+// pipewire-pulse sink can pick a pre-buffer of a second or more, and a
+// bound below that would cut melodies short.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Waveform {
@@ -369,7 +380,7 @@ impl CpalBackend {
             .device
             .build_output_stream(
                 state.config,
-                move |out: &mut [T], _info: &cpal::OutputCallbackInfo| {
+                move |out: &mut [T], _info: &cpal::CallbackInfo| {
                     // If the parent future was dropped, write zeros for the
                     // remainder of this callback and signal end-of-buffer.
                     // Mirrors FreeBSD spkr.c's PCATCH-aware tsleep that
@@ -432,8 +443,8 @@ impl CpalBackend {
             .map_err(|e| classify_to_speaker_error(&e, "build_output_stream"))?;
 
         stream
-            .play()
-            .map_err(|e| classify_to_speaker_error(&e, "stream.play"))?;
+            .start()
+            .map_err(|e| classify_to_speaker_error(&e, "stream.start"))?;
 
         let (lock, cv) = &*done;
         let mut d = lock.lock().unwrap();
@@ -442,9 +453,10 @@ impl CpalBackend {
         }
         drop(d);
 
-        // Inspect the error slot before adding the flush tail or returning
-        // Ok: a fatal/disconnect callback may have woken us before the data
-        // callback exhausted the buffer.
+        // Inspect the error slot before draining or returning Ok: a
+        // fatal/disconnect callback may have woken us before the data
+        // callback exhausted the buffer. Drop without draining — there is
+        // no point waiting for a stream the backend just declared broken.
         if let Some((class, msg)) = stream_err.lock().unwrap().take() {
             drop(stream);
             return Err(match class {
@@ -455,12 +467,20 @@ impl CpalBackend {
             });
         }
 
-        // Add a small tail so the device can flush buffered samples before we
-        // drop the stream — except when we're aborting, where we want
-        // cancellation to be snappy. Sized for the ~20 ms target buffer that
-        // BufferSize::Fixed(sample_rate/100) configures in CpalBackend::new.
+        // The condvar fires when the data callback has *written* the last
+        // sample, not when the device has played it. Drain so the queued
+        // frames actually reach the speaker before we tear the stream down.
+        //
+        // On abort we deliberately skip the drain and drop instead: cpal
+        // documents that dropping halts immediately without draining, which
+        // is what a client disconnect should do.
         if !abort.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(50));
+            // A drain error is not worth failing the request over — the
+            // melody has already been handed to the device. Log and fall
+            // through to the drop, which halts unconditionally.
+            if let Err(e) = stream.stop(Some(DRAIN_TIMEOUT)) {
+                warn!("cpal stream drain failed: {}", e);
+            }
         }
         drop(stream);
         Ok(())
@@ -520,24 +540,17 @@ fn build_device_state(cfg: &CpalConfig) -> Result<DeviceState, SpeakerError> {
         stream_cfg.sample_rate = sr;
     }
 
-    // Pin the callback period to ~10 ms (target buffer ~20 ms) instead of
-    // the backend default. Required for the cpal pulseaudio host on
-    // pipewire-pulse: with BufferSize::Default the cpal backend sends an
-    // all-u32::MAX BufferAttr ("server pick"), and pipewire-pulse picks a
-    // ~2-second initial pre-buffer. The very first data_callback then
-    // receives the entire 2 s buffer at once, exhausts a finite melody on
-    // the first call, and run_stream proceeds to drop the stream long
-    // before the audio has actually played out — pipewire-pulse discards
-    // the rest. An explicit small Fixed buffer makes pipewire-pulse honor
-    // tlength and deliver Requests in real-time chunks, restoring the
-    // periodic-callback pattern other cpal backends already follow.
+    // buffer_size is left at whatever default_output_config() yielded
+    // (BufferSize::Default), i.e. the backend's system-configured default.
     //
-    // Tracked upstream as RustAudio/cpal#1190, closed by #1258, which adds
-    // the draining `StreamTrait::stop(timeout)`. That API is 0.19.0-only
-    // and 0.19.0 is unreleased, so on 0.18.x this workaround (and the
-    // matching flush sleep in run_stream) is still required. Revisit both
-    // together once 0.19 ships.
-    stream_cfg.buffer_size = BufferSize::Fixed(stream_cfg.sample_rate / 100);
+    // spkrd previously pinned this to BufferSize::Fixed(sample_rate / 100)
+    // to work around RustAudio/cpal#1190: on pipewire-pulse, a "server
+    // pick" BufferAttr produced a ~2-second pre-buffer, the first
+    // data_callback received the whole thing at once, and run_stream then
+    // dropped the stream long before the audio had played out — so short
+    // melodies were truncated. That is now handled properly by the
+    // draining StreamTrait::stop in run_stream, added by #1258 (which
+    // closed #1190), so the override is no longer needed.
 
     Ok(DeviceState {
         device,
@@ -585,9 +598,7 @@ fn classify_error(err: &cpal::Error) -> ErrorClass {
     match err.kind() {
         // Documented in cpal::ErrorKind as "Audio will still play" /
         // "stream remains active" / "potential audio glitch".
-        ErrorKind::RealtimeDenied | ErrorKind::Xrun | ErrorKind::DeviceChanged => {
-            ErrorClass::Continues
-        }
+        ErrorKind::RealtimeDenied | ErrorKind::DeviceChanged => ErrorClass::Continues,
         // Transient host/device death; rebuild_device replaces the
         // cached client and retry on the same 1s cadence.
         ErrorKind::StreamInvalidated
@@ -918,7 +929,6 @@ mod tests {
         let mk = |k: ErrorKind| cpal::Error::new(k);
         // Continues — playback proceeds normally per cpal docs.
         assert_eq!(classify_error(&mk(ErrorKind::RealtimeDenied)), ErrorClass::Continues);
-        assert_eq!(classify_error(&mk(ErrorKind::Xrun)), ErrorClass::Continues);
         assert_eq!(classify_error(&mk(ErrorKind::DeviceChanged)), ErrorClass::Continues);
         // Disconnect — rebuild_device path.
         assert_eq!(classify_error(&mk(ErrorKind::StreamInvalidated)), ErrorClass::Disconnect);

@@ -21,10 +21,17 @@ syslog = "7.0"
 # Needed to set IPV6_V6ONLY before bind(); tokio's TcpListener::bind
 # exposes no hook for socket options. See src/server.rs.
 socket2 = { version = "0.6", features = ["all"] }
-# 0.18.2 is the first crates.io release carrying the PulseAudio
-# Stream::drop fixes (RustAudio/cpal#1189) that spkrd previously
-# consumed from a fork via [patch.crates-io].
-cpal = { version = "0.18.2", optional = true }
+# Tracking upstream cpal 0.19.0-dev, which is not yet on crates.io.
+# Needed for the draining `StreamTrait::stop(timeout)` added in
+# RustAudio/cpal#1258, which closes RustAudio/cpal#1190 — the
+# pipewire-pulse truncation bug spkrd used to work around with an
+# explicit small BufferSize. Cargo.lock still pins an exact revision,
+# so builds stay reproducible; `cargo update -p cpal` moves it
+# forward deliberately.
+#
+# Revert to a plain crates.io requirement (`cpal = "0.19"`) as soon as
+# 0.19.0 is released. Until then this branch must not be merged.
+cpal = { git = "https://github.com/RustAudio/cpal", optional = true }
 
 [features]
 default = ["cpal"]
